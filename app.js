@@ -1,5 +1,5 @@
 /* ============================================================
-   FGA TimeClock — app logic
+   JustUs Entertainment TimeClock — app logic
    Backend: n8n cloud webhooks (see config.js)
    ============================================================ */
 (() => {
@@ -364,7 +364,7 @@
           <div class="cam-frame"></div>
         </div>
         <div class="wiz-actions" id="camActions">
-          <button class="big-btn gold" id="camSnap" type="button"><span class="big-btn-title">📸 SNAP</span></button>
+          <button class="big-btn primary" id="camSnap" type="button"><span class="big-btn-title">📸 SNAP</span></button>
         </div>
         <div class="wiz-fallback">
           <label>Camera not working? Take it with your phone camera<input type="file" id="camFile" accept="image/*" capture></label>
@@ -396,7 +396,7 @@
         retake.onclick = () => renderWizard();
         const next = document.createElement('button');
         next.type = 'button';
-        next.className = 'big-btn gold';
+        next.className = 'big-btn primary';
         next.innerHTML = '<span class="big-btn-title">REVIEW →</span>';
         next.onclick = () => { wiz.step += 1; renderWizard(); };
         $('camActions').append(retake, next);

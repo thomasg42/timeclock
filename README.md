@@ -1,4 +1,4 @@
-# FGA TimeClock
+# JustUs Entertainment TimeClock
 
 Event-staffing clock-in/clock-out app. Live at https://thomasg42.github.io/timeclock/
 

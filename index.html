@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#141210">
-<title>FGA TimeClock</title>
+<meta name="theme-color" content="#0a0b0d">
+<title>JustUs Entertainment TimeClock</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -17,7 +17,7 @@
 <header class="topbar">
   <button class="brand" id="brandHome" type="button">
     <span class="brand-punch"></span>
-    <span class="brand-text">FGA <em>TIME</em>CLOCK</span>
+    <span class="brand-text">JUSTUS <em>ENTERTAINMENT</em></span>
   </button>
   <div class="topbar-right">
     <span id="liveClock" class="live-clock">--:--:--</span>
@@ -36,7 +36,7 @@
       <div class="hero-ampm" id="heroAmpm"></div>
     </div>
     <div class="home-actions">
-      <button class="big-btn gold" id="btnGoSelect" type="button">
+      <button class="big-btn primary" id="btnGoSelect" type="button">
         <span class="big-btn-title">SELECT PROFILE</span>
         <span class="big-btn-sub">Clock in / clock out</span>
       </button>
@@ -56,7 +56,7 @@
       <label>Date of birth<input type="date" id="cpDob" required></label>
       <label>Email<input type="email" id="cpEmail" required autocomplete="email" placeholder="you@email.com"></label>
       <label>Phone<input type="tel" id="cpPhone" required autocomplete="tel" placeholder="(406) 555-0100"></label>
-      <button class="big-btn gold" id="cpSubmit" type="submit"><span class="big-btn-title">CREATE PROFILE</span></button>
+      <button class="big-btn primary" id="cpSubmit" type="submit"><span class="big-btn-title">CREATE PROFILE</span></button>
       <p class="form-err hidden" id="cpErr"></p>
     </form>
   </section>
@@ -107,7 +107,7 @@
       <div class="admin-controls">
         <input type="date" id="adminDate">
         <button class="chip-btn" id="adminRefresh" type="button">REFRESH</button>
-        <button class="chip-btn gold" id="adminNewEvent" type="button">+ CREATE EVENT</button>
+        <button class="chip-btn primary" id="adminNewEvent" type="button">+ CREATE EVENT</button>
       </div>
       <div class="sheet-wrap">
         <table class="sheet" id="adminSheet">
@@ -128,7 +128,7 @@
         <label>Starts<input type="datetime-local" id="evStart" required></label>
         <label>Ends (sheet auto-sends after this)<input type="datetime-local" id="evEnd" required></label>
         <label>Send report to<input type="email" id="evOwner" required value="thomasg@forevergoldai.com"></label>
-        <button class="big-btn gold" type="submit"><span class="big-btn-title">CREATE EVENT</span></button>
+        <button class="big-btn primary" type="submit"><span class="big-btn-title">CREATE EVENT</span></button>
         <p class="form-err hidden" id="evErr"></p>
       </form>
     </div>
@@ -153,7 +153,7 @@
     <p id="confirmText" class="confirm-text"></p>
     <div class="confirm-actions">
       <button class="big-btn outline" id="confirmNo" type="button"><span class="big-btn-title">NO</span></button>
-      <button class="big-btn gold" id="confirmYes" type="button"><span class="big-btn-title">YES</span></button>
+      <button class="big-btn primary" id="confirmYes" type="button"><span class="big-btn-title">YES</span></button>
     </div>
   </div>
 </div>
