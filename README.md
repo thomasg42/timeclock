@@ -3,7 +3,7 @@
 Event-staffing clock-in/clock-out app. Live at https://thomasg42.github.io/timeclock/
 
 ## How it works
-- **Workers**: open the URL on their phone → Create Profile (first name, last name, DOB, email, phone) or Select Profile → CLOCK IN (pick the event, then 3 required live camera shots: manager thumbs up/down, the event, selfie) → optional BREAK (start/end, checkbox on the sheet) → CLOCK OUT ("Are you sure?") → full shift summary. Shift history persists forever on the profile.
+- **Workers**: open the URL on their phone → Create Profile (first name, last name, DOB, email, phone) or Select Profile → CLOCK IN (pick the event, then 1 required live selfie) → optional BREAK (start/end, checkbox on the sheet) → CLOCK OUT ("Are you sure?") → full shift summary. Shift history persists forever on the profile.
 - **Admin** (top right, code `1111`): Day Sheet spreadsheet of everyone's punches for any date (with photo links + hours), event list, and **Create Event** (name, start, end, report email).
 - **Auto report**: when an event's end time passes, an n8n schedule workflow emails the full time sheet (HTML table + CSV attachment) to the event's report email, once.
 

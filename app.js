@@ -296,11 +296,9 @@
   }
 
   /* ============================================================
-     CLOCK-IN WIZARD — event pick + 3 required camera shots
+     CLOCK-IN WIZARD — event pick + 1 required selfie
      ============================================================ */
   const SHOTS = [
-    { key: 'manager', title: 'MANAGER APPROVAL', sub: 'Photo of the manager on site — thumbs up (approved) or thumbs down.', facing: 'environment' },
-    { key: 'event', title: 'THE EVENT', sub: 'Photo of the event / job site you\'re working.', facing: 'environment' },
     { key: 'selfie', title: 'YOU, ON SITE', sub: 'Selfie proving you\'re here. Look alive.', facing: 'user' },
   ];
   let wiz = null;
@@ -327,7 +325,7 @@
 
     /* step 0 — pick event */
     if (wiz.step === 0) {
-      $('wizStep').textContent = 'STEP 1/5 — EVENT';
+      $('wizStep').textContent = 'STEP 1/3 — EVENT';
       body.innerHTML = '<div class="wiz-title">PICK YOUR EVENT</div><div class="wiz-sub">Loading events…</div>';
       let events = [];
       try {
@@ -353,10 +351,10 @@
       return;
     }
 
-    /* steps 1-3 — camera shots */
-    if (wiz.step >= 1 && wiz.step <= 3) {
-      const shot = SHOTS[wiz.step - 1];
-      $('wizStep').textContent = `STEP ${wiz.step + 1}/5 — PHOTO ${wiz.step}/3`;
+    /* step 1 — selfie */
+    if (wiz.step === 1) {
+      const shot = SHOTS[0];
+      $('wizStep').textContent = 'STEP 2/3 — SELFIE';
       body.innerHTML = `
         <div class="wiz-title">${shot.title}</div>
         <div class="wiz-sub">${shot.sub} <b>Required.</b></div>
@@ -399,7 +397,7 @@
         const next = document.createElement('button');
         next.type = 'button';
         next.className = 'big-btn gold';
-        next.innerHTML = `<span class="big-btn-title">${wiz.step === 3 ? 'REVIEW' : 'NEXT'} →</span>`;
+        next.innerHTML = '<span class="big-btn-title">REVIEW →</span>';
         next.onclick = () => { wiz.step += 1; renderWizard(); };
         $('camActions').append(retake, next);
       };
@@ -418,8 +416,8 @@
       return;
     }
 
-    /* step 4 — review + punch */
-    $('wizStep').textContent = 'STEP 5/5 — CONFIRM';
+    /* step 2 — review + punch */
+    $('wizStep').textContent = 'STEP 3/3 — CONFIRM';
     const now = new Date();
     body.innerHTML = `
       <div class="wiz-title">STAMP IT</div>
@@ -561,7 +559,7 @@
             <td>${p.break_taken ? '☑' : '☐'}</td>
             <td>${p.status === 'out' ? fmtTime(p.clock_out) : '<b style="color:var(--in-green)">on clock</b>'}</td>
             <td>${h != null ? h.toFixed(2) : '—'}</td>
-            <td>${photo(p.photo_manager, 'MGR')} ${photo(p.photo_event, 'EVT')} ${photo(p.photo_selfie, 'SELF')}</td>
+            <td>${photo(p.photo_selfie, 'SELFIE')}</td>
           </tr>`;
         }).join('');
       }
