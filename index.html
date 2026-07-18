@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#141210">
+<title>FGA TimeClock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <button class="brand" id="brandHome" type="button">
+    <span class="brand-punch"></span>
+    <span class="brand-text">FGA <em>TIME</em>CLOCK</span>
+  </button>
+  <div class="topbar-right">
+    <span id="liveClock" class="live-clock">--:--:--</span>
+    <button id="adminBtn" class="admin-link" type="button">ADMIN</button>
+  </div>
+</header>
+
+<main id="app">
+
+  <!-- ============ HOME ============ -->
+  <section class="view" id="view-home">
+    <div class="ticket-edge" aria-hidden="true"></div>
+    <div class="hero">
+      <div class="hero-date" id="heroDate">—</div>
+      <div class="hero-clock" id="heroClock">--:--</div>
+      <div class="hero-ampm" id="heroAmpm"></div>
+    </div>
+    <div class="home-actions">
+      <button class="big-btn gold" id="btnGoSelect" type="button">
+        <span class="big-btn-title">SELECT PROFILE</span>
+        <span class="big-btn-sub">Clock in / clock out</span>
+      </button>
+      <button class="big-btn outline" id="btnGoCreate" type="button">
+        <span class="big-btn-title">CREATE PROFILE</span>
+        <span class="big-btn-sub">First time here</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- ============ CREATE PROFILE ============ -->
+  <section class="view hidden" id="view-create">
+    <h2 class="view-title">NEW <em>PROFILE</em></h2>
+    <form id="createForm" class="card form-card" autocomplete="on">
+      <label>First name<input type="text" id="cpFirst" required autocomplete="given-name"></label>
+      <label>Last name<input type="text" id="cpLast" required autocomplete="family-name"></label>
+      <label>Date of birth<input type="date" id="cpDob" required></label>
+      <label>Email<input type="email" id="cpEmail" required autocomplete="email" placeholder="you@email.com"></label>
+      <label>Phone<input type="tel" id="cpPhone" required autocomplete="tel" placeholder="(406) 555-0100"></label>
+      <button class="big-btn gold" id="cpSubmit" type="submit"><span class="big-btn-title">CREATE PROFILE</span></button>
+      <p class="form-err hidden" id="cpErr"></p>
+    </form>
+  </section>
+
+  <!-- ============ SELECT PROFILE ============ -->
+  <section class="view hidden" id="view-select">
+    <h2 class="view-title">WHO'S <em>WORKING?</em></h2>
+    <div id="profileList" class="profile-list">
+      <p class="muted center" id="profileListMsg">Loading crew…</p>
+    </div>
+  </section>
+
+  <!-- ============ PROFILE / PUNCH ============ -->
+  <section class="view hidden" id="view-profile">
+    <div class="profile-head">
+      <div class="punch-hole" aria-hidden="true"></div>
+      <h2 class="worker-name" id="pfName">—</h2>
+      <div class="worker-meta" id="pfMeta"></div>
+    </div>
+
+    <!-- top center action -->
+    <div id="pfAction" class="pf-action"></div>
+
+    <h3 class="section-label">SHIFT HISTORY</h3>
+    <div id="pfHistory" class="history-list">
+      <p class="muted center">Loading…</p>
+    </div>
+  </section>
+
+  <!-- ============ ADMIN ============ -->
+  <section class="view hidden" id="view-admin">
+    <!-- PIN gate -->
+    <div id="adminGate">
+      <h2 class="view-title">ADMIN <em>ACCESS</em></h2>
+      <div class="pin-dots" id="pinDots"><i></i><i></i><i></i><i></i></div>
+      <div class="pin-pad" id="pinPad">
+        <button type="button">1</button><button type="button">2</button><button type="button">3</button>
+        <button type="button">4</button><button type="button">5</button><button type="button">6</button>
+        <button type="button">7</button><button type="button">8</button><button type="button">9</button>
+        <span></span><button type="button">0</button><button type="button" data-k="del">⌫</button>
+      </div>
+      <p class="form-err hidden center" id="pinErr">Wrong code</p>
+    </div>
+
+    <!-- dashboard -->
+    <div id="adminDash" class="hidden">
+      <h2 class="view-title">DAY <em>SHEET</em></h2>
+      <div class="admin-controls">
+        <input type="date" id="adminDate">
+        <button class="chip-btn" id="adminRefresh" type="button">REFRESH</button>
+        <button class="chip-btn gold" id="adminNewEvent" type="button">+ CREATE EVENT</button>
+      </div>
+      <div class="sheet-wrap">
+        <table class="sheet" id="adminSheet">
+          <thead><tr>
+            <th>Employee</th><th>Event</th><th>Clock In</th><th>Break Start</th><th>Break End</th>
+            <th>Break</th><th>Clock Out</th><th>Hours</th><th>Photos</th>
+          </tr></thead>
+          <tbody id="adminRows"><tr><td colspan="9" class="muted center">Loading…</td></tr></tbody>
+        </table>
+      </div>
+
+      <h3 class="section-label">EVENTS</h3>
+      <div id="adminEvents" class="event-list"></div>
+
+      <form id="eventForm" class="card form-card hidden">
+        <h3 class="card-title">NEW EVENT</h3>
+        <label>Event name<input type="text" id="evName" required placeholder="Smith Wedding — Bozeman"></label>
+        <label>Starts<input type="datetime-local" id="evStart" required></label>
+        <label>Ends (sheet auto-sends after this)<input type="datetime-local" id="evEnd" required></label>
+        <label>Send report to<input type="email" id="evOwner" required value="thomasg@forevergoldai.com"></label>
+        <button class="big-btn gold" type="submit"><span class="big-btn-title">CREATE EVENT</span></button>
+        <p class="form-err hidden" id="evErr"></p>
+      </form>
+    </div>
+  </section>
+</main>
+
+<!-- ============ CLOCK-IN WIZARD ============ -->
+<div class="modal hidden" id="wizard">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span id="wizStep" class="step-tag">STEP 1/5</span>
+      <button class="x-btn" id="wizClose" type="button">✕</button>
+    </div>
+    <div id="wizBody"></div>
+  </div>
+</div>
+
+<!-- ============ CONFIRM DIALOG ============ -->
+<div class="modal hidden" id="confirmModal">
+  <div class="modal-card small">
+    <h3 id="confirmTitle" class="confirm-title">Are you sure?</h3>
+    <p id="confirmText" class="confirm-text"></p>
+    <div class="confirm-actions">
+      <button class="big-btn outline" id="confirmNo" type="button"><span class="big-btn-title">NO</span></button>
+      <button class="big-btn gold" id="confirmYes" type="button"><span class="big-btn-title">YES</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SHIFT SUMMARY ============ -->
+<div class="modal hidden" id="summaryModal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span class="step-tag stamp-out">SHIFT COMPLETE</span>
+      <button class="x-btn" id="summaryClose" type="button">✕</button>
+    </div>
+    <div id="summaryBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
