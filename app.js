@@ -593,6 +593,7 @@
         archived: raw.archived && typeof raw.archived === 'object' ? raw.archived : {},
         deleted: raw.deleted && typeof raw.deleted === 'object' ? raw.deleted : {},
         eventPolicy: migrateEventPolicyMap(raw.eventPolicy),
+        createdAt: raw.createdAt && typeof raw.createdAt === 'object' ? raw.createdAt : {},
       };
     } catch {
       return {
@@ -601,6 +602,7 @@
         archived: {},
         deleted: {},
         eventPolicy: {},
+        createdAt: {},
       };
     }
   }
@@ -612,6 +614,18 @@
     if (!e || !e.includes('@')) return;
     meta.emails = [e, ...meta.emails.filter((x) => x.toLowerCase() !== e)].slice(0, 20);
     saveMeta(meta);
+  }
+  function markCreated(eventId) {
+    if (eventId == null) return;
+    meta.createdAt[String(eventId)] = Date.now();
+    saveMeta(meta);
+  }
+  function createdRank(ev) {
+    const stamped = meta.createdAt[String(ev.id)];
+    if (stamped) return stamped;
+    // fallback: start time so older events without a stamp sink below new ones
+    const t = Date.parse(ev.start_at || '') || 0;
+    return t;
   }
   function setEventPolicies(eventId, policyKeys) {
     if (!eventId) return;
@@ -764,9 +778,10 @@
     const box = $('adminEvents');
     try {
       const events = rows(await api('tc-events'))
-        .filter((ev) => !isDeleted(ev.id))
-        .sort((a, b) => String(b.start_at).localeCompare(String(a.start_at)));
-      const shown = events.filter((ev) => eventTab === 'archived' ? isArchived(ev.id) : !isArchived(ev.id));
+        .filter((ev) => !isDeleted(ev.id));
+      const shown = events
+        .filter((ev) => eventTab === 'archived' ? isArchived(ev.id) : !isArchived(ev.id))
+        .sort((a, b) => createdRank(b) - createdRank(a)); // newest created at top
       box.innerHTML = shown.length ? '' : `<p class="muted center">${eventTab === 'archived' ? 'Archive is empty.' : 'No active events — create one.'}</p>`;
       shown.forEach((ev) => box.appendChild(buildEventRow(ev)));
     } catch {
@@ -1201,20 +1216,34 @@
 
   function setDuration(kind) {
     [...$('evDurationChips').children].forEach((b) => b.classList.toggle('on', b.dataset.dur === kind));
-    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     if (kind === 'today') {
-      rangeStart = ymd(today); rangeEnd = ymd(today);
+      // Always the calendar day you are on right now
+      rangeStart = ymd(today);
+      rangeEnd = ymd(today);
+      calCursor = new Date(today);
+    } else if (kind === 'tomorrow') {
+      const next = addDays(today, 1);
+      rangeStart = ymd(next);
+      rangeEnd = ymd(next);
+      calCursor = next;
     } else if (kind === 'weekend') {
-      const sat = addDays(startOfWeek(today), 6);
-      const sun = addDays(sat, 1);
-      const use = today.getDay() === 0 ? addDays(today, -1) : (today.getDay() === 6 ? today : sat);
-      rangeStart = ymd(use);
-      rangeEnd = ymd(addDays(parseYmd(rangeStart), 1));
-      calCursor = parseYmd(rangeStart);
+      // Friday → Saturday of the coming weekend (this week if Fri/Sat already)
+      const dow = today.getDay(); // 0 Sun … 5 Fri 6 Sat
+      let fri;
+      if (dow === 5) fri = today;
+      else if (dow === 6) fri = addDays(today, -1);
+      else if (dow === 0) fri = addDays(today, 5); // next Friday
+      else fri = addDays(today, 5 - dow); // Mon–Thu → this Friday
+      rangeStart = ymd(fri);
+      rangeEnd = ymd(addDays(fri, 1)); // Saturday
+      calCursor = fri;
     } else if (kind === 'week') {
+      // Sunday → Thursday
       const sun = startOfWeek(today);
       rangeStart = ymd(sun);
-      rangeEnd = ymd(addDays(sun, 6));
+      rangeEnd = ymd(addDays(sun, 4));
       calCursor = sun;
     } else {
       /* custom — keep current picks */
@@ -1275,10 +1304,20 @@
     if (b) setDuration(b.dataset.dur);
   });
 
-  function openEventForm() {
+  function closeEventForm() {
     const form = $('eventForm');
-    form.classList.toggle('hidden');
-    if (form.classList.contains('hidden')) return;
+    form.classList.add('hidden');
+    form.reset();
+    selectedTemplateId = null;
+    selectedEmails = [];
+    $('evErr').classList.add('hidden');
+    $('evErr').textContent = '';
+  }
+
+  function openEventForm() {
+    // Always open a fresh New Event panel from the top button (never toggle-close)
+    const form = $('eventForm');
+    form.classList.remove('hidden');
     meta = loadMeta();
     selectedTemplateId = null;
     $('evName').value = '';
@@ -1293,7 +1332,9 @@
     rangeEnd = localDate();
     calCursor = new Date();
     setDuration('today');
+    $('evErr').classList.add('hidden');
     $('evName').focus();
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   $('adminRefresh').onclick = loadAdmin;
@@ -1318,8 +1359,13 @@
     const endT = timePickers.tpEnd.get();
     const start = parseYmd(rangeStart); start.setHours(startT.hour, startT.min, 0, 0);
     const end = parseYmd(rangeEnd); end.setHours(endT.hour, endT.min, 0, 0);
+    // Same-day / multi-day: if end clock is not after start, treat as overnight into the next calendar day
+    // (no "overlap" block — many JustUs shifts run past midnight)
     if (!(end > start)) {
-      $('evErr').textContent = 'End must be after start — check days and times.';
+      end.setDate(end.getDate() + 1);
+    }
+    if (!(end > start)) {
+      $('evErr').textContent = 'Check start/end times — something still looks off.';
       $('evErr').classList.remove('hidden');
       return;
     }
@@ -1343,11 +1389,14 @@
         }),
       });
       const row = Array.isArray(created) ? created[0] : created;
-      if (row && row.id != null) setEventPolicies(row.id, policyKeys);
+      if (row && row.id != null) {
+        setEventPolicies(row.id, policyKeys);
+        markCreated(row.id);
+      }
       rememberTemplate(name, policyKeys);
       selectedEmails.forEach(rememberEmail);
-      $('eventForm').classList.add('hidden');
-      toast('Event created — saved with its policies for next time.');
+      closeEventForm();
+      toast('Event live — New Event closed. Hit + CREATE EVENT for another.');
       eventTab = 'active';
       [...$('eventTabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === 'active'));
       loadAdminEvents();
