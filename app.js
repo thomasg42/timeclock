@@ -1344,6 +1344,15 @@
     return [...$('evPolicyChecks').querySelectorAll('.policy-check.on')].map((b) => b.dataset.policy);
   }
 
+  function removeTemplate(id) {
+    meta.templates = meta.templates.filter((t) => t.id !== id);
+    saveMeta(meta);
+    if (selectedTemplateId === id) {
+      selectedTemplateId = null;
+      if (!editingEvent) $('evName').value = '';
+    }
+  }
+
   function paintTemplates() {
     const box = $('evTemplates');
     box.innerHTML = '';
@@ -1352,8 +1361,38 @@
       const b = document.createElement('button');
       b.type = 'button';
       b.textContent = t.name;
+      b.title = 'Tap to select · Double-tap / double-click to delete';
       b.classList.toggle('on', selectedTemplateId === t.id);
-      b.onclick = () => applyTemplate(t);
+      let lastTap = 0;
+      let singleTimer = null;
+      const askDelete = async () => {
+        clearTimeout(singleTimer);
+        const yes = await confirmAsk(
+          'Delete saved event?',
+          `"${t.name}" will be removed from Choose Event. Active events and punch history stay.`
+        );
+        if (!yes) return;
+        removeTemplate(t.id);
+        paintTemplates();
+        toast('Removed from Choose Event.');
+      };
+      b.addEventListener('click', (e) => {
+        const now = Date.now();
+        // Double-tap (phones) or fast second click
+        if (now - lastTap < 380) {
+          lastTap = 0;
+          e.preventDefault();
+          askDelete();
+          return;
+        }
+        lastTap = now;
+        clearTimeout(singleTimer);
+        singleTimer = setTimeout(() => applyTemplate(t), 300);
+      });
+      b.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        askDelete();
+      });
       box.appendChild(b);
     });
   }

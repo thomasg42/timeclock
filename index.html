@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20260730-edit-event">
+<link rel="stylesheet" href="styles.css?v=20260730-chip-del">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>">
 </head>
 <body>
@@ -134,7 +134,7 @@
           <div class="template-chips" id="evTemplates"></div>
           <label class="sr-only" for="evName">Event name</label>
           <input type="text" id="evName" required placeholder="Type a new event — e.g. Wildlands" autocomplete="off">
-          <p class="field-note muted">Saved events show as chips above (newest first). Type a new name like Music in the Mountain — after Create Event it sticks at the top with its times, policies, and emails for next time.</p>
+          <p class="field-note muted">Saved events show as chips above (newest first). Tap to select. Double-tap / double-click a chip to delete it (asks yes first). Type a new name to create another — it sticks at the top after Create Event.</p>
         </div>
         <div class="field-block">
           <span class="field-label">Policies that apply</span>
@@ -248,6 +248,6 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="config.js"></script>
-<script src="app.js?v=20260730-edit-event"></script>
+<script src="app.js?v=20260730-chip-del"></script>
 </body>
 </html>
