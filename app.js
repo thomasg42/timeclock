@@ -330,8 +330,10 @@
       let events = [];
       try {
         meta = loadMeta();
+        await (metaSyncReady || Promise.resolve());
+        await ensureMetaSynced({ allowPush: false });
         events = rows(await api('tc-events')).map(applyEventEdit).filter((ev) =>
-          !isDeleted(ev.id) && !isArchived(ev.id) && (!ev.end_at || new Date(ev.end_at) > new Date()));
+          !isMetaEvent(ev) && !isDeleted(ev.id) && !isArchived(ev.id) && (!ev.end_at || new Date(ev.end_at) > new Date()));
       } catch { /* fall through */ }
       if (!events.length) {
         body.innerHTML = `
@@ -576,10 +578,12 @@
 
   /* ============================================================
      EVENT META (archive / delete / emails / policies)
-     Shared UI on phone + desktop. Archive/delete flags live in
-     localStorage until n8n gains PATCH — same browser profile syncs.
+     localStorage is a cache. Cloud sync = sentinel n8n event
+     __JUSTUS_TC_META__ so phone + desktop share one playing field.
      ============================================================ */
   const META_KEY = 'justus-tc-meta-v1';
+  const META_EVENT_NAME = '__JUSTUS_TC_META__';
+  const META_PREFIX = 'META_V1.';
   const POLICY_PACKS = {
     general: {
       id: 'general',
@@ -681,6 +685,7 @@
         eventPolicy: migrateEventPolicyMap(raw.eventPolicy),
         createdAt: raw.createdAt && typeof raw.createdAt === 'object' ? raw.createdAt : {},
         eventEdits: raw.eventEdits && typeof raw.eventEdits === 'object' ? raw.eventEdits : {},
+        updatedAt: Number(raw.updatedAt) || 0,
       };
     } catch {
       return {
@@ -691,11 +696,200 @@
         eventPolicy: {},
         createdAt: {},
         eventEdits: {},
+        updatedAt: 0,
       };
     }
   }
-  function saveMeta(m) { localStorage.setItem(META_KEY, JSON.stringify(m)); }
+
   let meta = loadMeta();
+  let cloudPushTimer = null;
+  let cloudSyncing = false;
+  let lastPushedAt = 0;
+  let metaSyncReady = null;
+
+  function isMetaEvent(ev) {
+    return !!ev && String(ev.name || '').trim() === META_EVENT_NAME;
+  }
+
+  function encodeMetaBlob(snapshot) {
+    const json = JSON.stringify(snapshot);
+    return META_PREFIX + btoa(unescape(encodeURIComponent(json)));
+  }
+
+  function decodeMetaBlob(ownerEmail) {
+    const s = String(ownerEmail || '');
+    if (!s.startsWith(META_PREFIX)) return null;
+    try {
+      return JSON.parse(decodeURIComponent(escape(atob(s.slice(META_PREFIX.length)))));
+    } catch {
+      return null;
+    }
+  }
+
+  function uniqEmails(list) {
+    const seen = new Set();
+    const out = [];
+    (list || []).forEach((e) => {
+      const n = normalizeEmail(e);
+      if (!isEmail(n) || seen.has(n)) return;
+      seen.add(n);
+      out.push(n);
+    });
+    return out;
+  }
+
+  function mergeTemplates(localList, remoteList) {
+    const map = new Map();
+    [...(remoteList || []), ...(localList || [])].forEach((t) => {
+      const n = normalizeTemplate(t);
+      if (!n) return;
+      const key = n.name.toLowerCase();
+      const prev = map.get(key);
+      if (!prev || (n.savedAt || 0) >= (prev.savedAt || 0)) map.set(key, n);
+    });
+    return [...map.values()]
+      .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))
+      .slice(0, 24);
+  }
+
+  function mergeEdits(localMap, remoteMap) {
+    const out = { ...(remoteMap || {}) };
+    Object.keys(localMap || {}).forEach((id) => {
+      const loc = localMap[id];
+      const rem = out[id];
+      if (!rem) out[id] = loc;
+      else if ((loc.updatedAt || 0) >= (rem.updatedAt || 0)) out[id] = { ...rem, ...loc };
+    });
+    return out;
+  }
+
+  function mergeBoolMaps(localMap, remoteMap, localAt, remoteAt) {
+    // Same-key conflict: newer whole-meta timestamp wins; otherwise OR so neither device drops a hide.
+    const out = { ...(remoteMap || {}) };
+    Object.keys(localMap || {}).forEach((id) => {
+      if (out[id] == null) out[id] = localMap[id];
+      else if ((localAt || 0) >= (remoteAt || 0)) out[id] = localMap[id];
+      else out[id] = !!(out[id] || localMap[id]);
+    });
+    return out;
+  }
+
+  function mergeMetaState(local, remote) {
+    if (!remote || remote.v !== 1) return local;
+    const localAt = Number(local.updatedAt) || 0;
+    const remoteAt = Number(remote.updatedAt) || 0;
+    const policy = (localAt >= remoteAt)
+      ? { ...(remote.eventPolicy || {}), ...(local.eventPolicy || {}) }
+      : { ...(local.eventPolicy || {}), ...(remote.eventPolicy || {}) };
+    const created = { ...(remote.createdAt || {}), ...(local.createdAt || {}) };
+    return {
+      emails: uniqEmails([...(remote.emails || []), ...(local.emails || [])]).slice(0, 20),
+      templates: mergeTemplates(local.templates, remote.templates),
+      archived: mergeBoolMaps(local.archived, remote.archived, localAt, remoteAt),
+      deleted: mergeBoolMaps(local.deleted, remote.deleted, localAt, remoteAt),
+      eventPolicy: migrateEventPolicyMap(policy),
+      createdAt: created,
+      eventEdits: mergeEdits(local.eventEdits, remote.eventEdits),
+      updatedAt: Math.max(localAt, remoteAt),
+    };
+  }
+
+  function saveMeta(m, opts = {}) {
+    const sync = opts.sync !== false;
+    m.updatedAt = Date.now();
+    localStorage.setItem(META_KEY, JSON.stringify(m));
+    meta = m;
+    if (sync) scheduleCloudMetaPush();
+  }
+
+  function scheduleCloudMetaPush() {
+    clearTimeout(cloudPushTimer);
+    cloudPushTimer = setTimeout(() => {
+      pushCloudMeta().catch(() => {});
+    }, 450);
+  }
+
+  async function listMetaEventRows() {
+    const events = rows(await api('tc-events'));
+    return events
+      .filter(isMetaEvent)
+      .map((ev) => ({ ev, blob: decodeMetaBlob(ev.owner_email) }))
+      .filter((row) => row.blob && row.blob.v === 1)
+      .sort((a, b) => (b.blob.updatedAt || 0) - (a.blob.updatedAt || 0));
+  }
+
+  async function pullAndMergeCloudMeta() {
+    const rowsMeta = await listMetaEventRows();
+    if (!rowsMeta.length) return false;
+    const latest = rowsMeta[0];
+    // Hide every sentinel row from Active/Archive UI on all devices
+    rowsMeta.forEach(({ ev }) => {
+      if (ev && ev.id != null) meta.deleted[String(ev.id)] = true;
+    });
+    meta = mergeMetaState(meta, latest.blob);
+    localStorage.setItem(META_KEY, JSON.stringify(meta));
+    return true;
+  }
+
+  async function pushCloudMeta() {
+    if (!adminPinOk || cloudSyncing) return false;
+    const snapshot = {
+      v: 1,
+      updatedAt: meta.updatedAt || Date.now(),
+      emails: meta.emails,
+      templates: meta.templates,
+      archived: meta.archived,
+      deleted: meta.deleted,
+      eventPolicy: meta.eventPolicy,
+      createdAt: meta.createdAt,
+      eventEdits: meta.eventEdits,
+    };
+    if (snapshot.updatedAt <= lastPushedAt) return false;
+    const owner = encodeMetaBlob(snapshot);
+    if (owner.length > 100000) {
+      console.warn('[timeclock] meta blob too large to sync');
+      return false;
+    }
+    cloudSyncing = true;
+    try {
+      try {
+        const prior = await listMetaEventRows();
+        prior.forEach(({ ev }) => {
+          if (ev && ev.id != null) meta.deleted[String(ev.id)] = true;
+        });
+      } catch { /* still push */ }
+
+      const created = await api('tc-events', {
+        method: 'POST',
+        body: JSON.stringify({
+          pass: adminPinOk,
+          name: META_EVENT_NAME,
+          start_at: '2099-01-01T00:00:00-07:00',
+          end_at: '2099-01-01T00:01:00-07:00',
+          owner_email: owner,
+        }),
+      });
+      const row = Array.isArray(created) ? created[0] : created;
+      if (row && row.id != null) meta.deleted[String(row.id)] = true;
+      lastPushedAt = snapshot.updatedAt;
+      localStorage.setItem(META_KEY, JSON.stringify(meta));
+      return true;
+    } finally {
+      cloudSyncing = false;
+    }
+  }
+
+  async function ensureMetaSynced({ allowPush = true } = {}) {
+    try {
+      await pullAndMergeCloudMeta();
+    } catch { /* offline / API — keep local cache */ }
+    if (allowPush && adminPinOk) {
+      try { await pushCloudMeta(); } catch { /* retry on next save */ }
+    }
+  }
+
+  // Warm shared meta as soon as the app loads (read-only until admin unlocks)
+  metaSyncReady = ensureMetaSynced({ allowPush: false });
 
   function rememberEmail(email) {
     const e = String(email || '').trim().toLowerCase();
@@ -777,7 +971,7 @@
   function syncTemplatesFromEvents(events) {
     let changed = false;
     (events || []).forEach((ev) => {
-      if (!ev || isDeleted(ev.id) || !ev.name) return;
+      if (!ev || isMetaEvent(ev) || isDeleted(ev.id) || !ev.name) return;
       const n = String(ev.name).trim();
       if (!n) return;
       const already = meta.templates.find((t) => t.name.toLowerCase() === n.toLowerCase());
@@ -887,6 +1081,8 @@
         $('adminGate').classList.add('hidden');
         $('adminDash').classList.remove('hidden');
         $('adminDate').value = localDate();
+        toast('Syncing admin state across devices…', false, 2200);
+        await ensureMetaSynced({ allowPush: true });
         loadAdmin();
       } catch {
         $('pinErr').classList.remove('hidden');
@@ -944,8 +1140,9 @@
   async function loadAdminEvents() {
     const box = $('adminEvents');
     try {
+      await ensureMetaSynced({ allowPush: !!adminPinOk });
       const events = rows(await api('tc-events'))
-        .filter((ev) => !isDeleted(ev.id))
+        .filter((ev) => !isMetaEvent(ev) && !isDeleted(ev.id))
         .map(applyEventEdit);
       syncTemplatesFromEvents(events);
       const shown = events
@@ -1658,6 +1855,11 @@
       $('evErr').classList.remove('hidden');
       return;
     }
+    if (name === META_EVENT_NAME || name.startsWith('__JUSTUS_TC_META')) {
+      $('evErr').textContent = 'That name is reserved for device sync — pick another.';
+      $('evErr').classList.remove('hidden');
+      return;
+    }
     if (!rangeStart || !rangeEnd) {
       $('evErr').textContent = 'Select start and end days on the calendar.';
       $('evErr').classList.remove('hidden');
@@ -1770,5 +1972,10 @@
   };
 
   /* ---------- QA hooks (harmless in production) ---------- */
-  window.__tc = { show, openProfile, loadProfiles, api, get current() { return current; }, get meta() { return meta; } };
+  window.__tc = {
+    show, openProfile, loadProfiles, api,
+    get current() { return current; },
+    get meta() { return meta; },
+    ensureMetaSynced, pushCloudMeta, pullAndMergeCloudMeta,
+  };
 })();
