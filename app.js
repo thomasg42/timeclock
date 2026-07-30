@@ -47,12 +47,12 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   let toastTimer;
-  function toast(msg, isErr = false) {
+  function toast(msg, isErr = false, ms = 3200) {
     const t = $('toast');
     t.textContent = msg;
     t.className = `toast${isErr ? ' err' : ''}`;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.add('hidden'), 3200);
+    toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
   }
 
   function confirmAsk(title, text) {
@@ -806,7 +806,12 @@
     }
   }
   function policiesForEvent(ev) {
-    const stored = meta.eventPolicy[String(ev.id)];
+    const id = String(ev && ev.id != null ? ev.id : '');
+    const fromEdit = meta.eventEdits && meta.eventEdits[id] && meta.eventEdits[id].policyKeys;
+    if (Array.isArray(fromEdit) && fromEdit.length) {
+      return normalizePolicyKeys(fromEdit).map((k) => POLICY_PACKS[k]).filter(Boolean);
+    }
+    const stored = meta.eventPolicy[id];
     if (stored && stored.length) return stored.map((k) => POLICY_PACKS[k]).filter(Boolean);
     const tpl = meta.templates.find((t) => t.name.toLowerCase() === String(ev.name || '').toLowerCase());
     if (tpl && tpl.policyKeys.length) return tpl.policyKeys.map((k) => POLICY_PACKS[k]).filter(Boolean);
@@ -1544,13 +1549,23 @@
   function closeEventForm() {
     const form = $('eventForm');
     form.classList.add('hidden');
-    form.reset();
     selectedTemplateId = null;
     selectedEmails = [];
     editingEvent = null;
     setFormMode('create');
     $('evErr').classList.add('hidden');
     $('evErr').textContent = '';
+    // Don't form.reset() — custom time/policy widgets fight native reset and can leave the panel feeling stuck.
+  }
+
+  function finishFormToEventList(message) {
+    closeEventForm();
+    eventTab = 'active';
+    [...$('eventTabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === 'active'));
+    loadAdminEvents();
+    toast(message, false, 4500);
+    const list = $('adminEvents');
+    if (list) list.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   function openEventForm() {
@@ -1686,12 +1701,15 @@
     // ——— EDIT existing event ———
     if (editingEvent && editingEvent.id != null) {
       const id = editingEvent.id;
+      const saveBtn = $('eventFormSubmitLabel');
+      if (saveBtn) saveBtn.textContent = 'SAVING…';
       setEventPolicies(id, policyKeys);
       saveEventEdit(id, {
         name,
         start_at: startISO,
         end_at: endISO,
         owner_email: owner,
+        policyKeys,
       });
       // Best-effort server update (n8n may only support create today)
       try {
@@ -1709,13 +1727,12 @@
           }),
         });
       } catch {
-        /* local edit still applied — reporter may still use original server times until Lane 1 adds PATCH */
+        /* local edit still applied */
       }
-      closeEventForm();
-      toast('Event updated.');
-      eventTab = 'active';
-      [...$('eventTabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === 'active'));
-      loadAdminEvents();
+      const policyLabel = policyKeys.length
+        ? policyKeys.map((k) => (POLICY_PACKS[k] && POLICY_PACKS[k].title) || k).join(' · ')
+        : 'no policies';
+      finishFormToEventList(`Saved. ${name} updated — ${policyLabel}.`);
       return;
     }
 
@@ -1746,11 +1763,7 @@
         emails: selectedEmails.slice(),
         duration: durationKind,
       });
-      closeEventForm();
-      toast('Event live — saved under Choose Event for next time.');
-      eventTab = 'active';
-      [...$('eventTabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === 'active'));
-      loadAdminEvents();
+      finishFormToEventList(`Event live — ${name} saved under Choose Event.`);
     } catch {
       $('evErr').textContent = 'Saved under Choose Event, but live create failed — check admin code and retry.';
       $('evErr').classList.remove('hidden');
