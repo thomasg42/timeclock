@@ -325,7 +325,7 @@
 
     /* step 0 — pick event */
     if (wiz.step === 0) {
-      $('wizStep').textContent = 'STEP 1/3 — EVENT';
+      $('wizStep').textContent = 'STEP 1/4 — EVENT';
       body.innerHTML = '<div class="wiz-title">PICK YOUR EVENT</div><div class="wiz-sub">Loading events…</div>';
       let events = [];
       try {
@@ -358,7 +358,7 @@
     /* step 1 — selfie */
     if (wiz.step === 1) {
       const shot = SHOTS[0];
-      $('wizStep').textContent = 'STEP 2/3 — SELFIE';
+      $('wizStep').textContent = 'STEP 2/4 — SELFIE';
       body.innerHTML = `
         <div class="wiz-title">${shot.title}</div>
         <div class="wiz-sub">${shot.sub} <b>Required.</b></div>
@@ -401,8 +401,8 @@
         const next = document.createElement('button');
         next.type = 'button';
         next.className = 'big-btn primary';
-        next.innerHTML = '<span class="big-btn-title">REVIEW →</span>';
-        next.onclick = () => { wiz.step += 1; renderWizard(); };
+        next.innerHTML = '<span class="big-btn-title">CONTINUE →</span>';
+        next.onclick = () => { wiz.step = 2; renderWizard(); };
         $('camActions').append(retake, next);
       };
 
@@ -420,20 +420,93 @@
       return;
     }
 
-    /* step 2 — review + punch */
-    $('wizStep').textContent = 'STEP 3/3 — CONFIRM';
-    const now = new Date();
+    /* step 2 — acknowledge every policy attached to this event (after selfie) */
+    if (wiz.step === 2) {
+      meta = loadMeta();
+      const packs = policiesForEvent(wiz.event);
+      $('wizStep').textContent = packs.length ? 'STEP 3/4 — POLICIES' : 'STEP 3/4 — POLICIES';
+      if (!packs.length) {
+        body.innerHTML = `
+          <div class="wiz-title">NO POLICIES ON THIS EVENT</div>
+          <div class="wiz-sub">Admin didn’t attach a policy pack. You can still clock in — ask your lead if something’s missing.</div>
+          <div class="wiz-actions">
+            <button class="big-btn green" id="wizPunch" type="button"><span class="big-btn-title">⏱ CLOCK IN NOW</span></button>
+          </div>
+          <p class="form-err hidden" id="wizErr" style="margin-top:.7rem"></p>`;
+        $('wizPunch').onclick = submitClockIn;
+        return;
+      }
+      const packTitles = packs.map((p) => p.title).join(' · ');
+      body.innerHTML = `
+        <div class="wiz-title">READ & ACKNOWLEDGE</div>
+        <div class="wiz-sub">${esc(wiz.event.name)} — scroll through every policy below, then confirm.</div>
+        <p class="wiz-policy-list muted">${esc(packTitles)}</p>
+        <div class="wiz-policy-scroll" id="wizPolicyScroll">${renderPolicyAckHtml(packs)}</div>
+        <p class="wiz-scroll-hint" id="wizScrollHint">Scroll to the bottom to unlock acknowledge.</p>
+        <label class="wiz-ack-check" id="wizAckLabel">
+          <input type="checkbox" id="wizAckCheck" disabled>
+          <span>I understand this policy and will conduct by such</span>
+        </label>
+        <div class="wiz-actions">
+          <button class="big-btn green" id="wizPunch" type="button" disabled>
+            <span class="big-btn-title">OK — CLOCK IN</span>
+          </button>
+        </div>
+        <p class="form-err hidden" id="wizErr" style="margin-top:.7rem"></p>`;
+
+      const scroller = $('wizPolicyScroll');
+      const check = $('wizAckCheck');
+      const punch = $('wizPunch');
+      const hint = $('wizScrollHint');
+      const unlock = () => {
+        const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 12;
+        if (atBottom) {
+          check.disabled = false;
+          hint.textContent = 'Check the box, then hit OK.';
+          hint.classList.add('ready');
+        }
+        punch.disabled = !(atBottom && check.checked);
+      };
+      // short policies: unlock immediately if nothing to scroll
+      requestAnimationFrame(() => {
+        if (scroller.scrollHeight <= scroller.clientHeight + 4) {
+          check.disabled = false;
+          hint.textContent = 'Check the box, then hit OK.';
+          hint.classList.add('ready');
+        }
+        unlock();
+      });
+      scroller.addEventListener('scroll', unlock, { passive: true });
+      check.addEventListener('change', unlock);
+      punch.onclick = submitClockIn;
+      return;
+    }
+
+    /* step 3 — congratulations (shown after successful punch) */
+    $('wizStep').textContent = 'STEP 4/4 — DONE';
     body.innerHTML = `
-      <div class="wiz-title">STAMP IT</div>
-      <div class="wiz-sub">${esc(wiz.event.name)} — ${now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })} at <b>${now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</b></div>
-      <div class="wiz-review">
-        ${SHOTS.map((s) => `<figure><img src="${wiz.photos[s.key]}" alt="${s.key}"><figcaption>${s.key}</figcaption></figure>`).join('')}
-      </div>
-      <div class="wiz-actions">
-        <button class="big-btn green" id="wizPunch" type="button"><span class="big-btn-title">⏱ CLOCK IN NOW</span></button>
-      </div>
-      <p class="form-err hidden" id="wizErr" style="margin-top:.7rem"></p>`;
-    $('wizPunch').onclick = submitClockIn;
+      <div class="wiz-congrats">
+        <div class="wiz-title">CONGRATULATIONS</div>
+        <div class="wiz-sub">You are now clocked in for <b>${esc(wiz.event.name)}</b>.</div>
+        <div class="wiz-actions">
+          <button class="big-btn primary" id="wizDone" type="button"><span class="big-btn-title">DONE</span></button>
+        </div>
+      </div>`;
+    $('wizDone').onclick = () => {
+      $('wizard').classList.add('hidden');
+      wiz = null;
+    };
+  }
+
+  function renderPolicyAckHtml(packs) {
+    return (packs || []).map((pack) => {
+      const full = (pack.sections || []).map((s) => `<h5>${esc(s.h)}</h5>${esc(s.body)}`).join('');
+      return `<div class="policy-block">
+        <h4>${esc(pack.title)}</h4>
+        <ul>${(pack.bullets || []).map((b) => `<li>${esc(b)}</li>`).join('')}</ul>
+        ${full ? `<div class="policy-full">${full}</div>` : ''}
+      </div>`;
+    }).join('');
   }
 
   function frameToJpeg(source, w, h) {
@@ -448,8 +521,10 @@
 
   async function submitClockIn() {
     const btn = $('wizPunch');
+    if (!btn) return;
     btn.disabled = true;
-    btn.querySelector('.big-btn-title').textContent = 'STAMPING…';
+    const title = btn.querySelector('.big-btn-title');
+    if (title) title.textContent = 'STAMPING…';
     try {
       await api('tc-punch', {
         method: 'POST',
@@ -462,17 +537,21 @@
           work_date: localDate(),
           clock_in: localISO(),
           photos: wiz.photos,
+          policies_acked: policiesForEvent(wiz.event).map((p) => p.id),
         }),
       });
-      $('wizard').classList.add('hidden');
-      wiz = null;
+      wiz.step = 3;
+      await renderWizard();
       toast('Clocked in. Have a good shift!');
       await refreshProfile();
     } catch {
-      $('wizErr').textContent = 'Clock-in failed — check signal and try again.';
-      $('wizErr').classList.remove('hidden');
+      const err = $('wizErr');
+      if (err) {
+        err.textContent = 'Clock-in failed — check signal and try again.';
+        err.classList.remove('hidden');
+      }
       btn.disabled = false;
-      btn.querySelector('.big-btn-title').textContent = '⏱ CLOCK IN NOW';
+      if (title) title.textContent = 'OK — CLOCK IN';
     }
   }
 
