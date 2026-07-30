@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20260729-events2">
+<link rel="stylesheet" href="styles.css?v=20260730-time-email">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>">
 </head>
 <body>
@@ -159,15 +159,38 @@
             <p class="cal-range" id="calRange">Tap a start day, then an end day.</p>
           </div>
           <div class="time-row">
-            <label>Start time<input type="time" id="evStartTime" value="10:00" required></label>
-            <label>End time<input type="time" id="evEndTime" value="22:00" required></label>
+            <div class="time-picker" id="tpStart" data-default="10:00">
+              <span class="field-label">Start time</span>
+              <div class="tp-wheels" aria-label="Start time wheels">
+                <div class="tp-col" data-part="hour"></div>
+                <div class="tp-colon">:</div>
+                <div class="tp-col" data-part="min"></div>
+                <div class="tp-col tp-ampm" data-part="ampm"></div>
+              </div>
+              <input type="text" class="tp-type" id="evStartType" inputmode="text" placeholder="Type e.g. 10:00 AM" autocomplete="off">
+            </div>
+            <div class="time-picker" id="tpEnd" data-default="22:00">
+              <span class="field-label">End time</span>
+              <div class="tp-wheels" aria-label="End time wheels">
+                <div class="tp-col" data-part="hour"></div>
+                <div class="tp-colon">:</div>
+                <div class="tp-col" data-part="min"></div>
+                <div class="tp-col tp-ampm" data-part="ampm"></div>
+              </div>
+              <input type="text" class="tp-type" id="evEndType" inputmode="text" placeholder="Type e.g. 10:00 PM" autocomplete="off">
+            </div>
           </div>
         </div>
         <div class="field-block">
           <span class="field-label">Send report to</span>
-          <input type="email" id="evOwner" required list="evEmailList" placeholder="Pick a past email or type a new one" autocomplete="email">
+          <div class="email-selected" id="evEmailSelected"></div>
+          <div class="email-add-row">
+            <input type="email" id="evOwnerInput" list="evEmailList" placeholder="Type an email and add" autocomplete="email">
+            <button type="button" class="chip-btn primary" id="evOwnerAdd">ADD</button>
+          </div>
           <datalist id="evEmailList"></datalist>
           <div class="email-chips" id="evEmailChips"></div>
+          <p class="field-note muted">Tap chips to toggle. Add as many owners as need the sheet — reports go to all of them.</p>
         </div>
         <button class="big-btn primary" type="submit"><span class="big-btn-title">CREATE EVENT</span></button>
         <p class="form-err hidden" id="evErr"></p>
@@ -224,6 +247,6 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="config.js"></script>
-<script src="app.js?v=20260729-events2"></script>
+<script src="app.js?v=20260730-time-email"></script>
 </body>
 </html>

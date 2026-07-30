@@ -359,10 +359,60 @@ em { font-style: normal; color: var(--blue); }
 .cal-day.today { box-shadow: inset 0 0 0 1px var(--white-dim); }
 .cal-range { font-size: .72rem; color: var(--muted); margin-top: .55rem; text-align: center; }
 .time-row { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
-.time-row label { display: flex; flex-direction: column; gap: .35rem; font-size: .68rem; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
-.time-row input[type="time"] {
+@media (max-width: 520px) { .time-row { grid-template-columns: 1fr; } }
+.time-picker { display: flex; flex-direction: column; gap: .45rem; }
+.tp-wheels {
+  position: relative; display: flex; align-items: stretch; justify-content: center; gap: .25rem;
+  background: var(--black); border: 1px solid var(--line); height: 132px; overflow: hidden;
+}
+.tp-wheels::before, .tp-wheels::after {
+  content: ""; position: absolute; left: 0; right: 0; z-index: 2; pointer-events: none; height: 44px;
+}
+.tp-wheels::before { top: 0; background: linear-gradient(180deg, rgba(10,11,13,.92), transparent); }
+.tp-wheels::after { bottom: 0; background: linear-gradient(0deg, rgba(10,11,13,.92), transparent); }
+.tp-hilite {
+  position: absolute; left: .4rem; right: .4rem; top: 44px; height: 44px; z-index: 1; pointer-events: none;
+  border-top: 1px solid var(--blue-dim); border-bottom: 1px solid var(--blue-dim);
+  background: rgba(47,125,255,.08);
+}
+.tp-col {
+  flex: 1; overflow-y: auto; scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; position: relative; z-index: 3; max-width: 72px;
+}
+.tp-col::-webkit-scrollbar { display: none; }
+.tp-col.tp-ampm { max-width: 64px; }
+.tp-item {
+  height: 44px; display: flex; align-items: center; justify-content: center;
+  scroll-snap-align: center; font-family: var(--display); font-size: 1.15rem;
+  color: var(--muted); user-select: none;
+}
+.tp-item.on { color: var(--white); }
+.tp-colon {
+  display: flex; align-items: center; font-family: var(--display); font-size: 1.2rem;
+  color: var(--blue); padding-bottom: 2px; z-index: 3;
+}
+.tp-type {
   background: var(--black); border: 1px solid var(--line); color: var(--text);
-  font-family: var(--mono); font-size: 1rem; padding: .7rem; min-height: 48px;
+  font-family: var(--mono); font-size: .95rem; padding: .7rem .7rem; min-height: 44px; width: 100%;
+}
+.tp-type:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+
+.email-selected { display: flex; flex-wrap: wrap; gap: .45rem; min-height: 1.5rem; }
+.email-selected .email-pill {
+  display: inline-flex; align-items: center; gap: .4rem;
+  background: var(--white); color: var(--ink); border: none;
+  padding: .4rem .55rem .4rem .7rem; font-size: .72rem; letter-spacing: .02em; min-height: 36px;
+}
+.email-selected .email-pill .x {
+  background: none; border: none; color: var(--ink); font-size: .9rem; padding: 0 .15rem; cursor: pointer;
+}
+.email-add-row { display: flex; gap: .45rem; }
+.email-add-row input {
+  flex: 1; background: var(--black); border: 1px solid var(--line); color: var(--text);
+  font-family: var(--mono); font-size: 1rem; padding: .8rem .7rem; min-height: 48px;
+}
+.email-chips button.on {
+  background: var(--blue); color: #fff; border-color: var(--blue); font-weight: 700;
 }
 
 .policy-block {

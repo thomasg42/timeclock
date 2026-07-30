@@ -883,21 +883,251 @@
   }
   $('evDetailClose').onclick = () => $('eventModal').classList.add('hidden');
 
-  /* ---------- create-event form: templates, calendar, emails ---------- */
+  /* ---------- scroll / type time pickers (12h + AM/PM) ---------- */
+  const timePickers = {};
+
+  function parseFlexibleTime(str) {
+    const raw = String(str || '').trim().toLowerCase().replace(/\./g, '');
+    if (!raw) return null;
+    let m = raw.match(/^(\d{1,2})(?::(\d{1,2}))?\s*(a|am|p|pm)?$/i);
+    if (!m) m = raw.match(/^(\d{1,2})(\d{2})\s*(a|am|p|pm)?$/i);
+    if (!m) return null;
+    let hour = Number(m[1]);
+    let min = Number(m[2] != null ? m[2] : 0);
+    if (Number.isNaN(hour) || Number.isNaN(min) || min < 0 || min > 59) return null;
+    const ap = (m[3] || '').charAt(0);
+    if (ap === 'a' || ap === 'p') {
+      if (hour < 1 || hour > 12) return null;
+      if (hour === 12) hour = 0;
+      if (ap === 'p') hour += 12;
+    } else if (hour > 23) return null;
+    return { hour, min };
+  }
+
+  function to12(hour24, min) {
+    const ap = hour24 >= 12 ? 'PM' : 'AM';
+    let h = hour24 % 12;
+    if (h === 0) h = 12;
+    return { h, min, ap };
+  }
+
+  function format12(hour24, min) {
+    const t = to12(hour24, min);
+    return `${t.h}:${pad(t.min)} ${t.ap}`;
+  }
+
+  function buildTimePicker(rootId, defaultHHMM) {
+    const root = $(rootId);
+    const [dh, dm] = defaultHHMM.split(':').map(Number);
+    const state = { hour: dh, min: dm };
+    const hourCol = root.querySelector('[data-part="hour"]');
+    const minCol = root.querySelector('[data-part="min"]');
+    const ampmCol = root.querySelector('[data-part="ampm"]');
+    const typeInput = root.querySelector('.tp-type');
+    let syncing = false;
+
+    if (!root.querySelector('.tp-hilite')) {
+      const hi = document.createElement('div');
+      hi.className = 'tp-hilite';
+      root.querySelector('.tp-wheels').appendChild(hi);
+    }
+
+    function fillCol(col, values, selected) {
+      col.innerHTML = '';
+      // spacer rows so first/last can center
+      const spacer = () => {
+        const s = document.createElement('div');
+        s.className = 'tp-item';
+        s.style.visibility = 'hidden';
+        s.textContent = '·';
+        return s;
+      };
+      col.appendChild(spacer());
+      values.forEach((v) => {
+        const item = document.createElement('div');
+        const label = col.dataset.part === 'min' ? pad(v) : String(v);
+        const selectedLabel = col.dataset.part === 'min' ? pad(selected) : String(selected);
+        item.className = `tp-item${label === selectedLabel ? ' on' : ''}`;
+        item.dataset.val = label;
+        item.textContent = label;
+        col.appendChild(item);
+      });
+      col.appendChild(spacer());
+    }
+
+    function paintWheels() {
+      const t = to12(state.hour, state.min);
+      fillCol(hourCol, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], t.h);
+      fillCol(minCol, Array.from({ length: 60 }, (_, i) => i), t.min);
+      fillCol(ampmCol, ['AM', 'PM'], t.ap);
+      requestAnimationFrame(() => {
+        snapTo(hourCol, String(t.h), false);
+        snapTo(minCol, pad(t.min), false);
+        snapTo(ampmCol, t.ap, false);
+      });
+      syncing = true;
+      typeInput.value = format12(state.hour, state.min);
+      syncing = false;
+    }
+
+    function snapTo(col, val, smooth) {
+      const items = [...col.querySelectorAll('.tp-item[data-val]')];
+      const target = items.find((el) => el.dataset.val === String(val) || el.dataset.val === String(Number(val)));
+      if (!target) return;
+      const top = target.offsetTop - (col.clientHeight / 2 - target.clientHeight / 2);
+      col.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
+      items.forEach((el) => el.classList.toggle('on', el === target));
+    }
+
+    function readCol(col) {
+      const mid = col.scrollTop + col.clientHeight / 2;
+      let best = null;
+      let bestDist = Infinity;
+      col.querySelectorAll('.tp-item[data-val]').forEach((el) => {
+        const c = el.offsetTop + el.clientHeight / 2;
+        const d = Math.abs(c - mid);
+        if (d < bestDist) { bestDist = d; best = el; }
+      });
+      return best;
+    }
+
+    function applyFromWheels() {
+      const hEl = readCol(hourCol);
+      const mEl = readCol(minCol);
+      const aEl = readCol(ampmCol);
+      if (!hEl || !mEl || !aEl) return;
+      let h = Number(hEl.dataset.val);
+      const min = Number(mEl.dataset.val);
+      const ap = aEl.dataset.val;
+      if (h === 12) h = 0;
+      if (ap === 'PM') h += 12;
+      state.hour = h;
+      state.min = min;
+      hourCol.querySelectorAll('.tp-item[data-val]').forEach((el) => el.classList.toggle('on', el === hEl));
+      minCol.querySelectorAll('.tp-item[data-val]').forEach((el) => el.classList.toggle('on', el === mEl));
+      ampmCol.querySelectorAll('.tp-item[data-val]').forEach((el) => el.classList.toggle('on', el === aEl));
+      syncing = true;
+      typeInput.value = format12(state.hour, state.min);
+      syncing = false;
+    }
+
+    let scrollTimers = new WeakMap();
+    function onScroll(col) {
+      clearTimeout(scrollTimers.get(col));
+      scrollTimers.set(col, setTimeout(() => {
+        const el = readCol(col);
+        if (el) snapTo(col, el.dataset.val, true);
+        applyFromWheels();
+      }, 80));
+    }
+
+    hourCol.onscroll = () => onScroll(hourCol);
+    minCol.onscroll = () => onScroll(minCol);
+    ampmCol.onscroll = () => onScroll(ampmCol);
+
+    // tap an item to select
+    [hourCol, minCol, ampmCol].forEach((col) => {
+      col.addEventListener('click', (e) => {
+        const item = e.target.closest('.tp-item[data-val]');
+        if (!item) return;
+        snapTo(col, item.dataset.val, true);
+        applyFromWheels();
+      });
+    });
+
+    typeInput.addEventListener('change', () => {
+      if (syncing) return;
+      const parsed = parseFlexibleTime(typeInput.value);
+      if (!parsed) {
+        typeInput.value = format12(state.hour, state.min);
+        toast('Couldn’t read that time — try 10:00 AM', true);
+        return;
+      }
+      state.hour = parsed.hour;
+      state.min = parsed.min;
+      paintWheels();
+    });
+    typeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); typeInput.blur(); }
+    });
+
+    paintWheels();
+    timePickers[rootId] = {
+      get: () => ({ hour: state.hour, min: state.min }),
+      set: (hour, min) => { state.hour = hour; state.min = min; paintWheels(); },
+    };
+  }
+
+  function initTimePickers() {
+    if (!timePickers.tpStart) buildTimePicker('tpStart', '10:00');
+    if (!timePickers.tpEnd) buildTimePicker('tpEnd', '22:00');
+  }
+
+  /* ---------- multi-email report recipients ---------- */
+  let selectedEmails = [];
+
+  function normalizeEmail(e) {
+    return String(e || '').trim().toLowerCase();
+  }
+  function isEmail(e) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+  }
+
   function paintEmailUI() {
     const list = $('evEmailList');
     const chips = $('evEmailChips');
+    const selectedBox = $('evEmailSelected');
     list.innerHTML = meta.emails.map((e) => `<option value="${esc(e)}"></option>`).join('');
+
+    selectedBox.innerHTML = '';
+    if (!selectedEmails.length) {
+      selectedBox.innerHTML = '<span class="muted" style="font-size:.72rem">No recipients yet — tap a chip or type + ADD.</span>';
+    } else {
+      selectedEmails.forEach((e) => {
+        const pill = document.createElement('span');
+        pill.className = 'email-pill';
+        pill.innerHTML = `${esc(e)} <button type="button" class="x" aria-label="Remove">✕</button>`;
+        pill.querySelector('.x').onclick = () => {
+          selectedEmails = selectedEmails.filter((x) => x !== e);
+          paintEmailUI();
+        };
+        selectedBox.appendChild(pill);
+      });
+    }
+
     chips.innerHTML = '';
-    meta.emails.slice(0, 6).forEach((e) => {
+    meta.emails.slice(0, 10).forEach((e) => {
+      const on = selectedEmails.includes(e);
       const b = document.createElement('button');
       b.type = 'button';
       b.textContent = e;
-      b.onclick = () => { $('evOwner').value = e; };
+      b.classList.toggle('on', on);
+      b.onclick = () => {
+        if (on) selectedEmails = selectedEmails.filter((x) => x !== e);
+        else selectedEmails = [...selectedEmails, e];
+        paintEmailUI();
+      };
       chips.appendChild(b);
     });
-    if (!$('evOwner').value) $('evOwner').value = meta.emails[0] || '';
   }
+
+  function addEmailFromInput() {
+    const raw = normalizeEmail($('evOwnerInput').value);
+    if (!raw) return;
+    if (!isEmail(raw)) {
+      toast('That doesn’t look like an email.', true);
+      return;
+    }
+    if (!selectedEmails.includes(raw)) selectedEmails = [...selectedEmails, raw];
+    rememberEmail(raw);
+    $('evOwnerInput').value = '';
+    paintEmailUI();
+  }
+
+  $('evOwnerAdd').onclick = addEmailFromInput;
+  $('evOwnerInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addEmailFromInput(); }
+  });
 
   function paintPolicyChecks(selectedKeys) {
     const selected = new Set(normalizePolicyKeys(selectedKeys));
@@ -1052,6 +1282,10 @@
     meta = loadMeta();
     selectedTemplateId = null;
     $('evName').value = '';
+    initTimePickers();
+    timePickers.tpStart.set(10, 0);
+    timePickers.tpEnd.set(22, 0);
+    selectedEmails = meta.emails[0] ? [meta.emails[0]] : [];
     paintTemplates();
     paintPolicyChecks([]);
     paintEmailUI();
@@ -1080,16 +1314,21 @@
       $('evErr').classList.remove('hidden');
       return;
     }
-    const [sh, sm] = $('evStartTime').value.split(':').map(Number);
-    const [eh, em] = $('evEndTime').value.split(':').map(Number);
-    const start = parseYmd(rangeStart); start.setHours(sh, sm, 0, 0);
-    const end = parseYmd(rangeEnd); end.setHours(eh, em, 0, 0);
+    const startT = timePickers.tpStart.get();
+    const endT = timePickers.tpEnd.get();
+    const start = parseYmd(rangeStart); start.setHours(startT.hour, startT.min, 0, 0);
+    const end = parseYmd(rangeEnd); end.setHours(endT.hour, endT.min, 0, 0);
     if (!(end > start)) {
       $('evErr').textContent = 'End must be after start — check days and times.';
       $('evErr').classList.remove('hidden');
       return;
     }
-    const owner = $('evOwner').value.trim();
+    if (!selectedEmails.length) {
+      $('evErr').textContent = 'Add at least one report email.';
+      $('evErr').classList.remove('hidden');
+      return;
+    }
+    const owner = selectedEmails.join(', ');
     const policyKeys = selectedPolicyKeys();
     try {
       const created = await api('tc-events', {
@@ -1106,7 +1345,7 @@
       const row = Array.isArray(created) ? created[0] : created;
       if (row && row.id != null) setEventPolicies(row.id, policyKeys);
       rememberTemplate(name, policyKeys);
-      rememberEmail(owner);
+      selectedEmails.forEach(rememberEmail);
       $('eventForm').classList.add('hidden');
       toast('Event created — saved with its policies for next time.');
       eventTab = 'active';
