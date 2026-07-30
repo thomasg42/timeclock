@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20260730-chip-del">
+<link rel="stylesheet" href="styles.css?v=20260730-form-close">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>">
 </head>
 <body>
@@ -128,7 +128,10 @@
       <div id="adminEvents" class="event-list"></div>
 
       <form id="eventForm" class="card form-card hidden">
-        <h3 class="card-title" id="eventFormTitle">NEW EVENT</h3>
+        <div class="form-card-head">
+          <h3 class="card-title" id="eventFormTitle">NEW EVENT</h3>
+          <button type="button" class="form-collapse" id="eventFormCollapse" aria-label="Close new event form" title="Close">⌃</button>
+        </div>
         <div class="field-block">
           <span class="field-label">Choose event</span>
           <div class="template-chips" id="evTemplates"></div>
@@ -248,6 +251,6 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="config.js"></script>
-<script src="app.js?v=20260730-chip-del"></script>
+<script src="app.js?v=20260730-form-close"></script>
 </body>
 </html>

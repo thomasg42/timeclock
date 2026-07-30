@@ -127,7 +127,17 @@ em { font-style: normal; color: var(--blue); }
   background: var(--panel); border: 1px solid var(--line);
   padding: 1.2rem; position: relative;
 }
-.card-title { font-family: var(--display); font-size: 1rem; letter-spacing: .06em; margin-bottom: 1rem; }
+.card-title { font-family: var(--display); font-size: 1rem; letter-spacing: .06em; margin-bottom: 0; }
+.form-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: .8rem;
+  margin-bottom: 1rem;
+}
+.form-collapse {
+  flex: none; width: 44px; height: 44px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--blue);
+  font-size: 1.35rem; line-height: 1; display: flex; align-items: center; justify-content: center;
+}
+.form-collapse:active, .form-collapse:hover { border-color: var(--blue); color: var(--white); }
 .form-card { display: flex; flex-direction: column; gap: .95rem; }
 .form-card label { display: flex; flex-direction: column; gap: .35rem; font-size: .68rem; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
 .form-card input {

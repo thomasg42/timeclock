@@ -1626,6 +1626,10 @@
   $('adminRefresh').onclick = loadAdmin;
   $('adminDate').onchange = loadAdmin;
   $('adminNewEvent').onclick = openEventForm;
+  $('eventFormCollapse').onclick = () => {
+    closeEventForm();
+    toast('New Event closed.');
+  };
 
   $('eventForm').onsubmit = async (e) => {
     e.preventDefault();
