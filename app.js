@@ -1540,10 +1540,13 @@
     if (b) setDuration(b.dataset.dur);
   });
 
-  function setFormMode(mode) {
+  function setFormMode(mode, eventId) {
     const editing = mode === 'edit';
     $('eventFormTitle').textContent = editing ? 'EDIT EVENT' : 'NEW EVENT';
     $('eventFormSubmitLabel').textContent = editing ? 'SAVE CHANGES' : 'CREATE EVENT';
+    const form = $('eventForm');
+    if (editing && eventId != null) form.dataset.editingId = String(eventId);
+    else delete form.dataset.editingId;
   }
 
   function closeEventForm() {
@@ -1596,7 +1599,7 @@
   function openEventFormForEdit(ev) {
     ev = applyEventEdit(ev);
     editingEvent = ev;
-    setFormMode('edit');
+    setFormMode('edit', ev.id);
     const form = $('eventForm');
     form.classList.remove('hidden');
     meta = loadMeta();
@@ -1698,9 +1701,12 @@
     });
     selectedEmails.forEach(rememberEmail);
 
-    // ——— EDIT existing event ———
-    if (editingEvent && editingEvent.id != null) {
-      const id = editingEvent.id;
+    // ——— EDIT existing event (never POST create — n8n create webhook would spawn a duplicate) ———
+    const editId = (editingEvent && editingEvent.id != null)
+      ? editingEvent.id
+      : ($('eventForm').dataset.editingId || null);
+    if (editId != null && String(editId) !== '') {
+      const id = editId;
       const saveBtn = $('eventFormSubmitLabel');
       if (saveBtn) saveBtn.textContent = 'SAVING…';
       setEventPolicies(id, policyKeys);
@@ -1711,32 +1717,24 @@
         owner_email: owner,
         policyKeys,
       });
-      // Best-effort server update (n8n may only support create today)
-      try {
-        await api('tc-events', {
-          method: 'POST',
-          body: JSON.stringify({
-            pass: adminPinOk,
-            action: 'update',
-            id,
-            name,
-            start_at: startISO,
-            end_at: endISO,
-            owner_email: owner,
-            policy_keys: policyKeys,
-          }),
-        });
-      } catch {
-        /* local edit still applied */
-      }
+      // Keep Choose Event chip in sync with this same event — do not create a live duplicate
+      rememberTemplate(name, {
+        policyKeys,
+        startHour: startSnap.hour,
+        startMin: startSnap.min,
+        endHour: endSnap.hour,
+        endMin: endSnap.min,
+        emails: selectedEmails.slice(),
+        duration: durationKind,
+      });
       const policyLabel = policyKeys.length
         ? policyKeys.map((k) => (POLICY_PACKS[k] && POLICY_PACKS[k].title) || k).join(' · ')
         : 'no policies';
-      finishFormToEventList(`Saved. ${name} updated — ${policyLabel}.`);
+      finishFormToEventList(`Saved. Updated “${name}” — ${policyLabel}. No new event added.`);
       return;
     }
 
-    // ——— CREATE new event ———
+    // ——— CREATE new event (only from + CREATE EVENT, never from Edit) ———
     try {
       const created = await api('tc-events', {
         method: 'POST',
