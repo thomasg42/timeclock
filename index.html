@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=20260729-events">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>">
 </head>
 <body>
@@ -120,20 +120,70 @@
       </div>
 
       <h3 class="section-label">EVENTS</h3>
+      <div class="event-tabs" id="eventTabs" role="tablist">
+        <button type="button" class="event-tab on" data-tab="active">ACTIVE</button>
+        <button type="button" class="event-tab" data-tab="archived">ARCHIVE</button>
+      </div>
+      <p class="event-hint muted center">Tap an event for details + policies. Swipe left to archive · swipe right to delete.</p>
       <div id="adminEvents" class="event-list"></div>
 
       <form id="eventForm" class="card form-card hidden">
         <h3 class="card-title">NEW EVENT</h3>
-        <label>Event name<input type="text" id="evName" required placeholder="Smith Wedding — Bozeman"></label>
-        <label>Starts<input type="datetime-local" id="evStart" required></label>
-        <label>Ends (sheet auto-sends after this)<input type="datetime-local" id="evEnd" required></label>
-        <label>Send report to<input type="email" id="evOwner" required value="thomasg@forevergoldai.com"></label>
+        <div class="field-block">
+          <span class="field-label">Choose event</span>
+          <div class="template-chips" id="evTemplates"></div>
+          <label class="sr-only" for="evName">Event name</label>
+          <input type="text" id="evName" required placeholder="Or type a new event name" autocomplete="off">
+        </div>
+        <div class="field-block">
+          <span class="field-label">Policy pack</span>
+          <select id="evPolicy" class="field-select"></select>
+        </div>
+        <div class="field-block">
+          <span class="field-label">How long</span>
+          <div class="duration-chips" id="evDurationChips">
+            <button type="button" class="dur-chip" data-dur="today">Today</button>
+            <button type="button" class="dur-chip" data-dur="weekend">Weekend</button>
+            <button type="button" class="dur-chip" data-dur="week">This week</button>
+            <button type="button" class="dur-chip on" data-dur="custom">Custom</button>
+          </div>
+          <div class="cal-wrap">
+            <div class="cal-nav">
+              <button type="button" class="chip-btn" id="calPrev" aria-label="Previous month">‹</button>
+              <span id="calTitle" class="cal-title">—</span>
+              <button type="button" class="chip-btn" id="calNext" aria-label="Next month">›</button>
+            </div>
+            <div class="cal-grid" id="calGrid"></div>
+            <p class="cal-range" id="calRange">Tap a start day, then an end day.</p>
+          </div>
+          <div class="time-row">
+            <label>Start time<input type="time" id="evStartTime" value="10:00" required></label>
+            <label>End time<input type="time" id="evEndTime" value="22:00" required></label>
+          </div>
+        </div>
+        <div class="field-block">
+          <span class="field-label">Send report to</span>
+          <input type="email" id="evOwner" required list="evEmailList" placeholder="Pick a past email or type a new one" autocomplete="email">
+          <datalist id="evEmailList"></datalist>
+          <div class="email-chips" id="evEmailChips"></div>
+        </div>
         <button class="big-btn primary" type="submit"><span class="big-btn-title">CREATE EVENT</span></button>
         <p class="form-err hidden" id="evErr"></p>
       </form>
     </div>
   </section>
 </main>
+
+<!-- ============ EVENT DETAIL ============ -->
+<div class="modal hidden" id="eventModal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span class="step-tag" id="evDetailTag">EVENT</span>
+      <button class="x-btn" id="evDetailClose" type="button">✕</button>
+    </div>
+    <div id="evDetailBody"></div>
+  </div>
+</div>
 
 <!-- ============ CLOCK-IN WIZARD ============ -->
 <div class="modal hidden" id="wizard">
@@ -172,6 +222,6 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="config.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=20260729-events"></script>
 </body>
 </html>

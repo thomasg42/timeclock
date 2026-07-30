@@ -329,7 +329,9 @@
       body.innerHTML = '<div class="wiz-title">PICK YOUR EVENT</div><div class="wiz-sub">Loading events…</div>';
       let events = [];
       try {
-        events = rows(await api('tc-events')).filter((ev) => !ev.end_at || new Date(ev.end_at) > new Date());
+        meta = loadMeta();
+        events = rows(await api('tc-events')).filter((ev) =>
+          !isDeleted(ev.id) && !isArchived(ev.id) && (!ev.end_at || new Date(ev.end_at) > new Date()));
       } catch { /* fall through */ }
       if (!events.length) {
         body.innerHTML = `
@@ -340,11 +342,12 @@
       body.innerHTML = '<div class="wiz-title">PICK YOUR EVENT</div><div class="wiz-sub">Which job are you clocking into?</div><div class="wiz-events" id="wizEvents"></div>';
       const list = $('wizEvents');
       events.forEach((ev) => {
+        const pack = policyForEvent(ev);
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'profile-item';
         b.innerHTML = `<span><span class="profile-item-name">${esc(ev.name)}</span><br>
-          <span class="profile-item-sub">${fmtTime(ev.start_at)} → ${fmtTime(ev.end_at)}</span></span>`;
+          <span class="profile-item-sub">${fmtTime(ev.start_at)} → ${fmtTime(ev.end_at)} · ${esc(pack.title)}</span></span>`;
         b.onclick = () => { wiz.event = ev; wiz.step = 1; renderWizard(); };
         list.appendChild(b);
       });
@@ -492,10 +495,119 @@
   $('summaryClose').onclick = () => $('summaryModal').classList.add('hidden');
 
   /* ============================================================
+     EVENT META (archive / delete / emails / policies)
+     Shared UI on phone + desktop. Archive/delete flags live in
+     localStorage until n8n gains PATCH — same browser profile syncs.
+     ============================================================ */
+  const META_KEY = 'justus-tc-meta-v1';
+  const POLICY_PACKS = {
+    general: {
+      id: 'general',
+      title: 'General Staff Handbook',
+      bullets: [
+        'Zero-tolerance alcohol/sobriety on site — termination if violated.',
+        'Clock in/out on your own device with a live selfie — no buddy punching.',
+        'Arrive ~15 min early, vest on, ready at your post.',
+        'Professional conduct with clients, guests, and crew at all times.',
+        'Breaks logged accurately; clock-out blocked while on break.',
+      ],
+    },
+    pbr: {
+      id: 'pbr',
+      title: 'PBR & Rodeo (Big Sky)',
+      stacksOn: 'general',
+      bullets: [
+        'Stacks on the General Handbook — alcohol, attendance, and vest rules still apply.',
+        'Three stations: Parking Lot, Ticket Booth (scan + bracelets), Skyboxes & Crowd Control.',
+        'Wear the yellow high-vis vest the entire post — never take it off on site.',
+        'Parking: never box cars in; front lot only for handicapped / reserved / authorities / competitors.',
+        'Ticket booth: security clears bags first, then one scan per person, match bracelet to ticket type.',
+        'Skyboxes are lanyard-only. No lanyard = no access.',
+        'Know your post (top / middle / bottom) and gate times before doors open.',
+      ],
+    },
+  };
+  const DEFAULT_TEMPLATES = [
+    { id: 'tpl-general', name: 'General Event', policyKey: 'general' },
+    { id: 'tpl-pbr', name: 'PBR / Rodeo — Big Sky', policyKey: 'pbr' },
+  ];
+
+  function loadMeta() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(META_KEY) || '{}');
+      return {
+        emails: Array.isArray(raw.emails) ? raw.emails : ['thomasg@forevergoldai.com'],
+        templates: Array.isArray(raw.templates) && raw.templates.length ? raw.templates : DEFAULT_TEMPLATES.slice(),
+        archived: raw.archived && typeof raw.archived === 'object' ? raw.archived : {},
+        deleted: raw.deleted && typeof raw.deleted === 'object' ? raw.deleted : {},
+        eventPolicy: raw.eventPolicy && typeof raw.eventPolicy === 'object' ? raw.eventPolicy : {},
+      };
+    } catch {
+      return {
+        emails: ['thomasg@forevergoldai.com'],
+        templates: DEFAULT_TEMPLATES.slice(),
+        archived: {},
+        deleted: {},
+        eventPolicy: {},
+      };
+    }
+  }
+  function saveMeta(m) { localStorage.setItem(META_KEY, JSON.stringify(m)); }
+  let meta = loadMeta();
+
+  function rememberEmail(email) {
+    const e = String(email || '').trim().toLowerCase();
+    if (!e || !e.includes('@')) return;
+    meta.emails = [e, ...meta.emails.filter((x) => x.toLowerCase() !== e)].slice(0, 20);
+    saveMeta(meta);
+  }
+  function setEventPolicy(eventId, policyKey) {
+    if (!eventId) return;
+    meta.eventPolicy[String(eventId)] = policyKey || 'general';
+    saveMeta(meta);
+  }
+  function policyForEvent(ev) {
+    const key = meta.eventPolicy[String(ev.id)]
+      || (/\bpbr\b|rodeo/i.test(ev.name || '') ? 'pbr' : 'general');
+    return POLICY_PACKS[key] || POLICY_PACKS.general;
+  }
+  function isArchived(id) { return !!meta.archived[String(id)]; }
+  function isDeleted(id) { return !!meta.deleted[String(id)]; }
+  function archiveEvent(id) {
+    meta.archived[String(id)] = true;
+    delete meta.deleted[String(id)];
+    saveMeta(meta);
+  }
+  function restoreEvent(id) {
+    delete meta.archived[String(id)];
+    saveMeta(meta);
+  }
+  function deleteEvent(id) {
+    meta.deleted[String(id)] = true;
+    delete meta.archived[String(id)];
+    saveMeta(meta);
+  }
+
+  function renderPolicyHtml(pack) {
+    const base = pack.stacksOn ? POLICY_PACKS[pack.stacksOn] : null;
+    let html = '';
+    if (base) {
+      html += `<div class="policy-block"><h4>${esc(base.title)}</h4><ul>${base.bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul></div>`;
+    }
+    html += `<div class="policy-block"><h4>${esc(pack.title)}</h4><ul>${pack.bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul></div>`;
+    return html;
+  }
+
+  /* ============================================================
      ADMIN
      ============================================================ */
   let adminPin = '';
-  let adminPinOk = null; // verified pin
+  let adminPinOk = null;
+  let eventTab = 'active';
+  let calCursor = new Date();
+  let rangeStart = null; // YYYY-MM-DD
+  let rangeEnd = null;
+  let selectedTemplateId = null;
 
   function openAdmin() {
     show('admin');
@@ -569,66 +681,331 @@
     loadAdminEvents();
   }
 
+  $('eventTabs').addEventListener('click', (e) => {
+    const tab = e.target.closest('[data-tab]');
+    if (!tab) return;
+    eventTab = tab.dataset.tab;
+    [...$('eventTabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === eventTab));
+    loadAdminEvents();
+  });
+
   async function loadAdminEvents() {
     const box = $('adminEvents');
     try {
-      const events = rows(await api('tc-events')).sort((a, b) => String(b.start_at).localeCompare(String(a.start_at)));
-      box.innerHTML = events.length ? '' : '<p class="muted center">No events yet.</p>';
-      events.slice(0, 12).forEach((ev) => {
-        const ended = ev.end_at && new Date(ev.end_at) <= new Date();
-        const badge = ev.report_sent
-          ? '<span class="badge sent">SHEET SENT</span>'
-          : ended ? '<span class="badge done">ENDED — SENDING</span>' : '<span class="badge live">LIVE</span>';
-        const div = document.createElement('div');
-        div.className = 'event-item';
-        div.innerHTML = `<span><span class="ev-name">${esc(ev.name)}</span><br>
-          <span class="ev-times">${new Date(ev.start_at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-          → ${new Date(ev.end_at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-          · report → ${esc(ev.owner_email || '')}</span></span>${badge}`;
-        box.appendChild(div);
-      });
+      const events = rows(await api('tc-events'))
+        .filter((ev) => !isDeleted(ev.id))
+        .sort((a, b) => String(b.start_at).localeCompare(String(a.start_at)));
+      const shown = events.filter((ev) => eventTab === 'archived' ? isArchived(ev.id) : !isArchived(ev.id));
+      box.innerHTML = shown.length ? '' : `<p class="muted center">${eventTab === 'archived' ? 'Archive is empty.' : 'No active events — create one.'}</p>`;
+      shown.forEach((ev) => box.appendChild(buildEventRow(ev)));
     } catch {
       box.innerHTML = '<p class="form-err center">Couldn\'t load events.</p>';
     }
   }
 
+  function buildEventRow(ev) {
+    const ended = ev.end_at && new Date(ev.end_at) <= new Date();
+    const badge = isArchived(ev.id)
+      ? '<span class="badge arch">ARCHIVED</span>'
+      : ev.report_sent
+        ? '<span class="badge sent">SHEET SENT</span>'
+        : ended ? '<span class="badge done">ENDED</span>' : '<span class="badge live">LIVE</span>';
+    const wrap = document.createElement('div');
+    wrap.className = 'event-swipe';
+    wrap.innerHTML = `<div class="event-swipe-bg"><span class="arch">ARCHIVE</span><span class="del">DELETE</span></div>`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'event-item';
+    btn.innerHTML = `<span><span class="ev-name">${esc(ev.name)}</span><br>
+      <span class="ev-times">${new Date(ev.start_at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+      → ${new Date(ev.end_at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+      · ${esc(ev.owner_email || '')}</span></span>${badge}`;
+    btn.onclick = () => openEventDetail(ev);
+    wrap.appendChild(btn);
+    attachSwipe(wrap, btn, {
+      left: async () => {
+        if (isArchived(ev.id)) {
+          restoreEvent(ev.id);
+          toast('Restored to active.');
+        } else {
+          archiveEvent(ev.id);
+          toast('Archived.');
+        }
+        loadAdminEvents();
+      },
+      right: async () => {
+        const yes = await confirmAsk('Delete this event?', `"${ev.name}" will be hidden from Active and Archive. Past punch history stays on worker profiles.`);
+        if (!yes) { btn.style.transform = ''; return; }
+        deleteEvent(ev.id);
+        toast('Event removed from the list.');
+        $('eventModal').classList.add('hidden');
+        loadAdminEvents();
+      },
+    });
+    return wrap;
+  }
+
+  function attachSwipe(wrap, btn, handlers) {
+    let x0 = null;
+    let dx = 0;
+    const THRESH = 72;
+    const start = (x) => { x0 = x; dx = 0; btn.style.transition = 'none'; };
+    const move = (x) => {
+      if (x0 == null) return;
+      dx = x - x0;
+      btn.style.transform = `translateX(${Math.max(-110, Math.min(110, dx))}px)`;
+    };
+    const end = async () => {
+      if (x0 == null) return;
+      btn.style.transition = 'transform .15s ease';
+      if (dx <= -THRESH) await handlers.left();
+      else if (dx >= THRESH) await handlers.right();
+      else btn.style.transform = '';
+      x0 = null; dx = 0;
+    };
+    btn.addEventListener('touchstart', (e) => start(e.changedTouches[0].clientX), { passive: true });
+    btn.addEventListener('touchmove', (e) => move(e.changedTouches[0].clientX), { passive: true });
+    btn.addEventListener('touchend', end);
+    btn.addEventListener('mousedown', (e) => {
+      start(e.clientX);
+      const onMove = (ev) => move(ev.clientX);
+      const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); end(); };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+  }
+
+  function openEventDetail(ev) {
+    const pack = policyForEvent(ev);
+    const ended = ev.end_at && new Date(ev.end_at) <= new Date();
+    $('evDetailTag').textContent = isArchived(ev.id) ? 'ARCHIVED EVENT' : ended ? 'PAST EVENT' : 'LIVE EVENT';
+    $('evDetailBody').innerHTML = `
+      <h3 class="confirm-title" style="text-align:left;margin-bottom:.4rem">${esc(ev.name)}</h3>
+      <div class="ev-detail-meta">
+        <div><b>Starts</b> — ${new Date(ev.start_at).toLocaleString()}</div>
+        <div><b>Ends</b> — ${new Date(ev.end_at).toLocaleString()}</div>
+        <div><b>Report email</b> — ${esc(ev.owner_email || '—')}</div>
+        <div><b>Sheet</b> — ${ev.report_sent ? 'sent' : ended ? 'pending / ended' : 'open'}</div>
+      </div>
+      <h3 class="section-label" style="margin-top:1rem">POLICIES</h3>
+      ${renderPolicyHtml(pack)}
+      <div class="ev-detail-actions">
+        ${isArchived(ev.id)
+          ? '<button class="big-btn outline" id="evRestoreBtn" type="button"><span class="big-btn-title">RESTORE TO ACTIVE</span></button>'
+          : '<button class="big-btn outline" id="evArchiveBtn" type="button"><span class="big-btn-title">ARCHIVE</span></button>'}
+        <button class="big-btn danger" id="evDeleteBtn" type="button"><span class="big-btn-title">DELETE</span></button>
+      </div>`;
+    $('eventModal').classList.remove('hidden');
+    const arch = $('evArchiveBtn');
+    const rest = $('evRestoreBtn');
+    if (arch) arch.onclick = () => { archiveEvent(ev.id); toast('Archived.'); $('eventModal').classList.add('hidden'); loadAdminEvents(); };
+    if (rest) rest.onclick = () => { restoreEvent(ev.id); toast('Restored.'); $('eventModal').classList.add('hidden'); loadAdminEvents(); };
+    $('evDeleteBtn').onclick = async () => {
+      const yes = await confirmAsk('Delete this event?', `"${ev.name}" will be hidden from the lists.`);
+      if (!yes) return;
+      deleteEvent(ev.id);
+      toast('Event removed from the list.');
+      $('eventModal').classList.add('hidden');
+      loadAdminEvents();
+    };
+  }
+  $('evDetailClose').onclick = () => $('eventModal').classList.add('hidden');
+
+  /* ---------- create-event form: templates, calendar, emails ---------- */
+  function paintEmailUI() {
+    const list = $('evEmailList');
+    const chips = $('evEmailChips');
+    list.innerHTML = meta.emails.map((e) => `<option value="${esc(e)}"></option>`).join('');
+    chips.innerHTML = '';
+    meta.emails.slice(0, 6).forEach((e) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = e;
+      b.onclick = () => { $('evOwner').value = e; };
+      chips.appendChild(b);
+    });
+    if (!$('evOwner').value) $('evOwner').value = meta.emails[0] || '';
+  }
+
+  function paintPolicySelect(selected) {
+    const sel = $('evPolicy');
+    sel.innerHTML = Object.values(POLICY_PACKS).map((p) =>
+      `<option value="${esc(p.id)}"${p.id === selected ? ' selected' : ''}>${esc(p.title)}</option>`).join('');
+  }
+
+  function paintTemplates() {
+    const box = $('evTemplates');
+    box.innerHTML = '';
+    meta.templates.forEach((t) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = t.name;
+      b.classList.toggle('on', selectedTemplateId === t.id);
+      b.onclick = () => {
+        selectedTemplateId = t.id;
+        $('evName').value = t.name;
+        paintPolicySelect(t.policyKey);
+        paintTemplates();
+      };
+      box.appendChild(b);
+    });
+  }
+
+  function ymd(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+  function parseYmd(s) {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+  function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+  function startOfWeek(d) {
+    const x = new Date(d); const day = x.getDay();
+    x.setDate(x.getDate() - day); x.setHours(0, 0, 0, 0); return x;
+  }
+
+  function setDuration(kind) {
+    [...$('evDurationChips').children].forEach((b) => b.classList.toggle('on', b.dataset.dur === kind));
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (kind === 'today') {
+      rangeStart = ymd(today); rangeEnd = ymd(today);
+    } else if (kind === 'weekend') {
+      const sat = addDays(startOfWeek(today), 6);
+      const sun = addDays(sat, 1);
+      const use = today.getDay() === 0 ? addDays(today, -1) : (today.getDay() === 6 ? today : sat);
+      rangeStart = ymd(use);
+      rangeEnd = ymd(addDays(parseYmd(rangeStart), 1));
+      calCursor = parseYmd(rangeStart);
+    } else if (kind === 'week') {
+      const sun = startOfWeek(today);
+      rangeStart = ymd(sun);
+      rangeEnd = ymd(addDays(sun, 6));
+      calCursor = sun;
+    } else {
+      /* custom — keep current picks */
+    }
+    paintCalendar();
+  }
+
+  function paintCalendar() {
+    const title = $('calTitle');
+    const grid = $('calGrid');
+    const y = calCursor.getFullYear();
+    const m = calCursor.getMonth();
+    title.textContent = new Date(y, m, 1).toLocaleDateString([], { month: 'long', year: 'numeric' });
+    const firstDow = new Date(y, m, 1).getDay();
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const dows = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    grid.innerHTML = dows.map((d) => `<div class="cal-dow">${d}</div>`).join('');
+    for (let i = 0; i < firstDow; i++) grid.innerHTML += '<button type="button" class="cal-day" disabled></button>';
+    const todayStr = localDate();
+    for (let day = 1; day <= daysInMonth; day++) {
+      const s = `${y}-${pad(m + 1)}-${pad(day)}`;
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'cal-day';
+      b.textContent = String(day);
+      if (s === todayStr) b.classList.add('today');
+      if (rangeStart && rangeEnd && s >= rangeStart && s <= rangeEnd) b.classList.add('in-range');
+      if (s === rangeStart || s === rangeEnd) b.classList.add('edge');
+      b.onclick = () => {
+        if (!rangeStart || (rangeStart && rangeEnd)) {
+          rangeStart = s; rangeEnd = null;
+        } else if (s < rangeStart) {
+          rangeEnd = rangeStart; rangeStart = s;
+        } else {
+          rangeEnd = s;
+        }
+        [...$('evDurationChips').children].forEach((c) => c.classList.toggle('on', c.dataset.dur === 'custom'));
+        paintCalendar();
+      };
+      grid.appendChild(b);
+    }
+    const label = $('calRange');
+    if (rangeStart && rangeEnd) {
+      label.textContent = rangeStart === rangeEnd
+        ? `Selected: ${fmtDate(rangeStart)}`
+        : `Selected: ${fmtDate(rangeStart)} → ${fmtDate(rangeEnd)}`;
+    } else if (rangeStart) {
+      label.textContent = `Start ${fmtDate(rangeStart)} — now tap the end day.`;
+    } else {
+      label.textContent = 'Tap a start day, then an end day.';
+    }
+  }
+
+  $('calPrev').onclick = () => { calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() - 1, 1); paintCalendar(); };
+  $('calNext').onclick = () => { calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() + 1, 1); paintCalendar(); };
+  $('evDurationChips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-dur]');
+    if (b) setDuration(b.dataset.dur);
+  });
+
+  function openEventForm() {
+    const form = $('eventForm');
+    form.classList.toggle('hidden');
+    if (form.classList.contains('hidden')) return;
+    meta = loadMeta();
+    selectedTemplateId = null;
+    paintTemplates();
+    paintPolicySelect('general');
+    paintEmailUI();
+    rangeStart = localDate();
+    rangeEnd = localDate();
+    calCursor = new Date();
+    setDuration('today');
+    $('evName').focus();
+  }
+
   $('adminRefresh').onclick = loadAdmin;
   $('adminDate').onchange = loadAdmin;
-  $('adminNewEvent').onclick = () => {
-    $('eventForm').classList.toggle('hidden');
-    if (!$('evStart').value) {
-      const now = new Date();
-      $('evStart').value = `${localDate(now)}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-      const end = new Date(now.getTime() + 8 * 3600000);
-      $('evEnd').value = `${localDate(end)}T${pad(end.getHours())}:${pad(end.getMinutes())}`;
-    }
-  };
+  $('adminNewEvent').onclick = openEventForm;
 
   $('eventForm').onsubmit = async (e) => {
     e.preventDefault();
     $('evErr').classList.add('hidden');
-    const start = new Date($('evStart').value);
-    const end = new Date($('evEnd').value);
-    if (!(end > start)) {
-      $('evErr').textContent = 'End must be after start.';
+    const name = $('evName').value.trim();
+    if (!name) {
+      $('evErr').textContent = 'Pick a template or type an event name.';
       $('evErr').classList.remove('hidden');
       return;
     }
+    if (!rangeStart || !rangeEnd) {
+      $('evErr').textContent = 'Select start and end days on the calendar.';
+      $('evErr').classList.remove('hidden');
+      return;
+    }
+    const [sh, sm] = $('evStartTime').value.split(':').map(Number);
+    const [eh, em] = $('evEndTime').value.split(':').map(Number);
+    const start = parseYmd(rangeStart); start.setHours(sh, sm, 0, 0);
+    const end = parseYmd(rangeEnd); end.setHours(eh, em, 0, 0);
+    if (!(end > start)) {
+      $('evErr').textContent = 'End must be after start — check days and times.';
+      $('evErr').classList.remove('hidden');
+      return;
+    }
+    const owner = $('evOwner').value.trim();
+    const policyKey = $('evPolicy').value || 'general';
     try {
-      await api('tc-events', {
+      const created = await api('tc-events', {
         method: 'POST',
         body: JSON.stringify({
           pass: adminPinOk,
-          name: $('evName').value.trim(),
+          name,
           start_at: localISO(start),
           end_at: localISO(end),
-          owner_email: $('evOwner').value.trim(),
+          owner_email: owner,
+          policy_key: policyKey,
         }),
       });
-      $('eventForm').reset();
-      $('evOwner').value = 'thomasg@forevergoldai.com';
+      const row = Array.isArray(created) ? created[0] : created;
+      if (row && row.id != null) setEventPolicy(row.id, policyKey);
+      rememberEmail(owner);
+      if (!meta.templates.some((t) => t.name.toLowerCase() === name.toLowerCase())) {
+        meta.templates = [{ id: `tpl-${Date.now()}`, name, policyKey }, ...meta.templates].slice(0, 12);
+        saveMeta(meta);
+      }
       $('eventForm').classList.add('hidden');
       toast('Event created — crew can clock in now.');
+      eventTab = 'active';
+      [...$('eventTabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === 'active'));
       loadAdminEvents();
     } catch {
       $('evErr').textContent = 'Could not create event — check the admin code and retry.';
@@ -637,5 +1014,5 @@
   };
 
   /* ---------- QA hooks (harmless in production) ---------- */
-  window.__tc = { show, openProfile, loadProfiles, api, get current() { return current; } };
+  window.__tc = { show, openProfile, loadProfiles, api, get current() { return current; }, get meta() { return meta; } };
 })();

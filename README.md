@@ -4,8 +4,10 @@ Event-staffing clock-in/clock-out app. Live at https://thomasg42.github.io/timec
 
 ## How it works
 - **Workers**: open the URL on their phone → Create Profile (first name, last name, DOB, email, phone) or Select Profile → CLOCK IN (pick the event, then 1 required live selfie) → optional BREAK (start/end, checkbox on the sheet) → CLOCK OUT ("Are you sure?") → full shift summary. Shift history persists forever on the profile.
-- **Admin** (top right, code `1111`): Day Sheet spreadsheet of everyone's punches for any date (with photo links + hours), event list, and **Create Event** (name, start, end, report email).
+- **Admin** (top right, code `1111`): Day Sheet, **Events** (Active / Archive tabs — tap for detail + policies, swipe left archive, swipe right delete), and **Create Event** (reusable templates, policy pack, calendar duration chips, prior report emails).
+- **Policies**: each event carries a policy pack (General Handbook and/or PBR & Rodeo). Shown when you open the event; workers see the pack name when picking an event to clock into.
 - **Auto report**: when an event's end time passes, an n8n schedule workflow emails the full time sheet (HTML table + CSV attachment) to the event's report email, once.
+- **Note:** archive/delete/email-history/policy bindings are stored in the browser (`localStorage`) until an n8n PATCH lands — same phone/desktop browser profile keeps them; a fresh browser starts clean on those flags only. Live events and punches still come from n8n.
 
 ## Backend (n8n cloud — tggai.app.n8n.cloud)
 - **TimeClock API** (workflow `HgZ6HgjJXs8vCtr6`, active): webhooks `tc-profiles` (GET/POST), `tc-events` (GET/POST, POST needs `pass`), `tc-history?profileId=`, `tc-admin?pass=&date=`, `tc-punch` (POST: `clock_in` | `break_start` | `break_end` | `clock_out`). CORS open (`allowedOrigins: *`).
