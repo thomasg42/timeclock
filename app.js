@@ -330,7 +330,7 @@
       let events = [];
       try {
         meta = loadMeta();
-        events = rows(await api('tc-events')).filter((ev) =>
+        events = rows(await api('tc-events')).map(applyEventEdit).filter((ev) =>
           !isDeleted(ev.id) && !isArchived(ev.id) && (!ev.end_at || new Date(ev.end_at) > new Date()));
       } catch { /* fall through */ }
       if (!events.length) {
@@ -680,6 +680,7 @@
         deleted: raw.deleted && typeof raw.deleted === 'object' ? raw.deleted : {},
         eventPolicy: migrateEventPolicyMap(raw.eventPolicy),
         createdAt: raw.createdAt && typeof raw.createdAt === 'object' ? raw.createdAt : {},
+        eventEdits: raw.eventEdits && typeof raw.eventEdits === 'object' ? raw.eventEdits : {},
       };
     } catch {
       return {
@@ -689,6 +690,7 @@
         deleted: {},
         eventPolicy: {},
         createdAt: {},
+        eventEdits: {},
       };
     }
   }
@@ -717,6 +719,24 @@
     if (!eventId) return;
     meta.eventPolicy[String(eventId)] = normalizePolicyKeys(policyKeys);
     saveMeta(meta);
+  }
+  function saveEventEdit(eventId, patch) {
+    if (eventId == null) return;
+    const id = String(eventId);
+    meta.eventEdits[id] = { ...(meta.eventEdits[id] || {}), ...patch, updatedAt: Date.now() };
+    saveMeta(meta);
+  }
+  function applyEventEdit(ev) {
+    if (!ev || ev.id == null) return ev;
+    const ed = meta.eventEdits[String(ev.id)];
+    if (!ed) return ev;
+    return {
+      ...ev,
+      name: ed.name != null ? ed.name : ev.name,
+      start_at: ed.start_at != null ? ed.start_at : ev.start_at,
+      end_at: ed.end_at != null ? ed.end_at : ev.end_at,
+      owner_email: ed.owner_email != null ? ed.owner_email : ev.owner_email,
+    };
   }
   function rememberTemplate(name, extras = {}) {
     const n = String(name || '').trim();
@@ -920,7 +940,8 @@
     const box = $('adminEvents');
     try {
       const events = rows(await api('tc-events'))
-        .filter((ev) => !isDeleted(ev.id));
+        .filter((ev) => !isDeleted(ev.id))
+        .map(applyEventEdit);
       syncTemplatesFromEvents(events);
       const shown = events
         .filter((ev) => eventTab === 'archived' ? isArchived(ev.id) : !isArchived(ev.id))
@@ -1004,7 +1025,10 @@
     });
   }
 
+  let editingEvent = null; // live event row when form is in edit mode
+
   function openEventDetail(ev) {
+    ev = applyEventEdit(ev);
     const packs = policiesForEvent(ev);
     const ended = ev.end_at && new Date(ev.end_at) <= new Date();
     $('evDetailTag').textContent = isArchived(ev.id) ? 'ARCHIVED EVENT' : ended ? 'PAST EVENT' : 'LIVE EVENT';
@@ -1020,12 +1044,17 @@
       <h3 class="section-label" style="margin-top:1rem">POLICIES</h3>
       ${renderPolicyHtml(packs)}
       <div class="ev-detail-actions">
+        <button class="big-btn primary" id="evEditBtn" type="button"><span class="big-btn-title">EDIT</span></button>
         ${isArchived(ev.id)
           ? '<button class="big-btn outline" id="evRestoreBtn" type="button"><span class="big-btn-title">RESTORE TO ACTIVE</span></button>'
           : '<button class="big-btn outline" id="evArchiveBtn" type="button"><span class="big-btn-title">ARCHIVE</span></button>'}
         <button class="big-btn danger" id="evDeleteBtn" type="button"><span class="big-btn-title">DELETE</span></button>
       </div>`;
     $('eventModal').classList.remove('hidden');
+    $('evEditBtn').onclick = () => {
+      $('eventModal').classList.add('hidden');
+      openEventFormForEdit(ev);
+    };
     const arch = $('evArchiveBtn');
     const rest = $('evRestoreBtn');
     if (arch) arch.onclick = () => { archiveEvent(ev.id); toast('Archived.'); $('eventModal').classList.add('hidden'); loadAdminEvents(); };
@@ -1467,18 +1496,28 @@
     if (b) setDuration(b.dataset.dur);
   });
 
+  function setFormMode(mode) {
+    const editing = mode === 'edit';
+    $('eventFormTitle').textContent = editing ? 'EDIT EVENT' : 'NEW EVENT';
+    $('eventFormSubmitLabel').textContent = editing ? 'SAVE CHANGES' : 'CREATE EVENT';
+  }
+
   function closeEventForm() {
     const form = $('eventForm');
     form.classList.add('hidden');
     form.reset();
     selectedTemplateId = null;
     selectedEmails = [];
+    editingEvent = null;
+    setFormMode('create');
     $('evErr').classList.add('hidden');
     $('evErr').textContent = '';
   }
 
   function openEventForm() {
     // Always open a fresh New Event panel from the top button (never toggle-close)
+    editingEvent = null;
+    setFormMode('create');
     const form = $('eventForm');
     form.classList.remove('hidden');
     meta = loadMeta();
@@ -1495,6 +1534,51 @@
     rangeEnd = localDate();
     calCursor = new Date();
     setDuration('today');
+    $('evErr').classList.add('hidden');
+    $('evName').focus();
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function openEventFormForEdit(ev) {
+    ev = applyEventEdit(ev);
+    editingEvent = ev;
+    setFormMode('edit');
+    const form = $('eventForm');
+    form.classList.remove('hidden');
+    meta = loadMeta();
+    selectedTemplateId = null;
+    $('evName').value = ev.name || '';
+
+    const start = new Date(ev.start_at);
+    const end = new Date(ev.end_at);
+    rangeStart = ymd(start);
+    rangeEnd = ymd(end);
+    // if overnight edit stored end on next day, keep that
+    calCursor = start;
+    durationKind = 'custom';
+    [...$('evDurationChips').children].forEach((c) => c.classList.toggle('on', c.dataset.dur === 'custom'));
+    paintCalendar();
+
+    initTimePickers();
+    timePickers.tpStart.set(start.getHours(), start.getMinutes());
+    timePickers.tpEnd.set(end.getHours(), end.getMinutes());
+
+    const packs = policiesForEvent(ev);
+    paintPolicyChecks(packs.map((p) => p.id));
+
+    selectedEmails = String(ev.owner_email || '')
+      .split(/[,;]+/)
+      .map(normalizeEmail)
+      .filter(isEmail);
+    if (!selectedEmails.length && meta.emails[0]) selectedEmails = [meta.emails[0]];
+    paintEmailUI();
+    paintTemplates();
+
+    // highlight matching Choose Event chip if any
+    const match = meta.templates.find((t) => t.name.toLowerCase() === String(ev.name || '').toLowerCase());
+    if (match) selectedTemplateId = match.id;
+    paintTemplates();
+
     $('evErr').classList.add('hidden');
     $('evName').focus();
     form.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1541,8 +1625,10 @@
     const policyKeys = selectedPolicyKeys();
     const startSnap = timePickers.tpStart.get();
     const endSnap = timePickers.tpEnd.get();
-    // Save the typed event as a Choose Event chip immediately (name + policies + times + emails),
-    // then create the live instance. Recurring picks reuse this chip next time.
+    const startISO = localISO(start);
+    const endISO = localISO(end);
+
+    // Always refresh the Choose Event chip with the latest settings
     rememberTemplate(name, {
       policyKeys,
       startHour: startSnap.hour,
@@ -1552,14 +1638,53 @@
       emails: selectedEmails.slice(),
       duration: durationKind,
     });
+    selectedEmails.forEach(rememberEmail);
+
+    // ——— EDIT existing event ———
+    if (editingEvent && editingEvent.id != null) {
+      const id = editingEvent.id;
+      setEventPolicies(id, policyKeys);
+      saveEventEdit(id, {
+        name,
+        start_at: startISO,
+        end_at: endISO,
+        owner_email: owner,
+      });
+      // Best-effort server update (n8n may only support create today)
+      try {
+        await api('tc-events', {
+          method: 'POST',
+          body: JSON.stringify({
+            pass: adminPinOk,
+            action: 'update',
+            id,
+            name,
+            start_at: startISO,
+            end_at: endISO,
+            owner_email: owner,
+            policy_keys: policyKeys,
+          }),
+        });
+      } catch {
+        /* local edit still applied — reporter may still use original server times until Lane 1 adds PATCH */
+      }
+      closeEventForm();
+      toast('Event updated.');
+      eventTab = 'active';
+      [...$('eventTabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === 'active'));
+      loadAdminEvents();
+      return;
+    }
+
+    // ——— CREATE new event ———
     try {
       const created = await api('tc-events', {
         method: 'POST',
         body: JSON.stringify({
           pass: adminPinOk,
           name,
-          start_at: localISO(start),
-          end_at: localISO(end),
+          start_at: startISO,
+          end_at: endISO,
           owner_email: owner,
           policy_keys: policyKeys,
         }),
@@ -1569,7 +1694,6 @@
         setEventPolicies(row.id, policyKeys);
         markCreated(row.id);
       }
-      // bump chip to top again after successful live create
       rememberTemplate(name, {
         policyKeys,
         startHour: startSnap.hour,
@@ -1579,14 +1703,12 @@
         emails: selectedEmails.slice(),
         duration: durationKind,
       });
-      selectedEmails.forEach(rememberEmail);
       closeEventForm();
       toast('Event live — saved under Choose Event for next time.');
       eventTab = 'active';
       [...$('eventTabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === 'active'));
       loadAdminEvents();
     } catch {
-      // Chip already saved above so typed work isn't lost if the live create fails
       $('evErr').textContent = 'Saved under Choose Event, but live create failed — check admin code and retry.';
       $('evErr').classList.remove('hidden');
       paintTemplates();

@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20260730-policy-ack">
+<link rel="stylesheet" href="styles.css?v=20260730-edit-event">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>">
 </head>
 <body>
@@ -128,7 +128,7 @@
       <div id="adminEvents" class="event-list"></div>
 
       <form id="eventForm" class="card form-card hidden">
-        <h3 class="card-title">NEW EVENT</h3>
+        <h3 class="card-title" id="eventFormTitle">NEW EVENT</h3>
         <div class="field-block">
           <span class="field-label">Choose event</span>
           <div class="template-chips" id="evTemplates"></div>
@@ -193,7 +193,7 @@
           <div class="email-chips" id="evEmailChips"></div>
           <p class="field-note muted">Tap chips to toggle. Add as many owners as need the sheet — reports go to all of them.</p>
         </div>
-        <button class="big-btn primary" type="submit"><span class="big-btn-title">CREATE EVENT</span></button>
+        <button class="big-btn primary" type="submit"><span class="big-btn-title" id="eventFormSubmitLabel">CREATE EVENT</span></button>
         <p class="form-err hidden" id="evErr"></p>
       </form>
     </div>
@@ -248,6 +248,6 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="config.js"></script>
-<script src="app.js?v=20260730-policy-ack"></script>
+<script src="app.js?v=20260730-edit-event"></script>
 </body>
 </html>
