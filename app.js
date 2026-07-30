@@ -565,6 +565,13 @@
       id: t.id || `tpl-${Date.now()}`,
       name: String(t.name).trim(),
       policyKeys: policyKeys.length ? policyKeys : [],
+      startHour: Number.isFinite(t.startHour) ? t.startHour : 10,
+      startMin: Number.isFinite(t.startMin) ? t.startMin : 0,
+      endHour: Number.isFinite(t.endHour) ? t.endHour : 22,
+      endMin: Number.isFinite(t.endMin) ? t.endMin : 0,
+      emails: Array.isArray(t.emails) ? t.emails.map(normalizeEmail).filter(isEmail) : [],
+      duration: ['today', 'tomorrow', 'weekend', 'week', 'custom'].includes(t.duration) ? t.duration : 'custom',
+      savedAt: Number(t.savedAt) || Date.now(),
     };
   }
   function migrateEventPolicyMap(raw) {
@@ -632,18 +639,72 @@
     meta.eventPolicy[String(eventId)] = normalizePolicyKeys(policyKeys);
     saveMeta(meta);
   }
-  function rememberTemplate(name, policyKeys) {
+  function rememberTemplate(name, extras = {}) {
     const n = String(name || '').trim();
     if (!n) return;
-    const keys = normalizePolicyKeys(policyKeys);
+    const keys = normalizePolicyKeys(extras.policyKeys);
+    const payload = {
+      id: `tpl-${Date.now()}`,
+      name: n,
+      policyKeys: keys,
+      startHour: Number.isFinite(extras.startHour) ? extras.startHour : 10,
+      startMin: Number.isFinite(extras.startMin) ? extras.startMin : 0,
+      endHour: Number.isFinite(extras.endHour) ? extras.endHour : 22,
+      endMin: Number.isFinite(extras.endMin) ? extras.endMin : 0,
+      emails: Array.isArray(extras.emails) ? extras.emails.map(normalizeEmail).filter(isEmail) : [],
+      duration: ['today', 'tomorrow', 'weekend', 'week', 'custom'].includes(extras.duration) ? extras.duration : 'custom',
+      savedAt: Date.now(),
+    };
     const existing = meta.templates.find((t) => t.name.toLowerCase() === n.toLowerCase());
     if (existing) {
-      existing.policyKeys = keys;
       existing.name = n;
+      existing.policyKeys = payload.policyKeys;
+      existing.startHour = payload.startHour;
+      existing.startMin = payload.startMin;
+      existing.endHour = payload.endHour;
+      existing.endMin = payload.endMin;
+      existing.emails = payload.emails;
+      existing.duration = payload.duration;
+      existing.savedAt = payload.savedAt;
+      // bump to front of Choose Event
+      meta.templates = [existing, ...meta.templates.filter((t) => t.id !== existing.id)];
     } else {
-      meta.templates = [{ id: `tpl-${Date.now()}`, name: n, policyKeys: keys }, ...meta.templates].slice(0, 24);
+      meta.templates = [payload, ...meta.templates].slice(0, 24);
     }
     saveMeta(meta);
+  }
+
+  /** Pull event names from the live list into Choose Event chips (covers typed creates that need to stick). */
+  function syncTemplatesFromEvents(events) {
+    let changed = false;
+    (events || []).forEach((ev) => {
+      if (!ev || isDeleted(ev.id) || !ev.name) return;
+      const n = String(ev.name).trim();
+      if (!n) return;
+      const already = meta.templates.find((t) => t.name.toLowerCase() === n.toLowerCase());
+      if (already) return;
+      const keys = normalizePolicyKeys(meta.eventPolicy[String(ev.id)]);
+      meta.templates.unshift({
+        id: `tpl-sync-${ev.id}`,
+        name: n,
+        policyKeys: keys,
+        startHour: 10,
+        startMin: 0,
+        endHour: 22,
+        endMin: 0,
+        emails: String(ev.owner_email || '')
+          .split(/[,;]+/)
+          .map(normalizeEmail)
+          .filter(isEmail),
+        duration: 'custom',
+        savedAt: Date.parse(ev.start_at || '') || Date.now(),
+      });
+      changed = true;
+    });
+    if (changed) {
+      meta.templates = meta.templates.slice(0, 24);
+      saveMeta(meta);
+    }
   }
   function policiesForEvent(ev) {
     const stored = meta.eventPolicy[String(ev.id)];
@@ -774,11 +835,14 @@
     loadAdminEvents();
   });
 
+  let durationKind = 'today';
+
   async function loadAdminEvents() {
     const box = $('adminEvents');
     try {
       const events = rows(await api('tc-events'))
         .filter((ev) => !isDeleted(ev.id));
+      syncTemplatesFromEvents(events);
       const shown = events
         .filter((ev) => eventTab === 'archived' ? isArchived(ev.id) : !isArchived(ev.id))
         .sort((a, b) => createdRank(b) - createdRank(a)); // newest created at top
@@ -1175,19 +1239,37 @@
   function paintTemplates() {
     const box = $('evTemplates');
     box.innerHTML = '';
-    meta.templates.forEach((t) => {
+    const sorted = meta.templates.slice().sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+    sorted.forEach((t) => {
       const b = document.createElement('button');
       b.type = 'button';
       b.textContent = t.name;
       b.classList.toggle('on', selectedTemplateId === t.id);
-      b.onclick = () => {
-        selectedTemplateId = t.id;
-        $('evName').value = t.name;
-        paintPolicyChecks(t.policyKeys || []);
-        paintTemplates();
-      };
+      b.onclick = () => applyTemplate(t);
       box.appendChild(b);
     });
+  }
+
+  function applyTemplate(t) {
+    selectedTemplateId = t.id;
+    $('evName').value = t.name;
+    paintPolicyChecks(t.policyKeys || []);
+    initTimePickers();
+    timePickers.tpStart.set(t.startHour ?? 10, t.startMin ?? 0);
+    timePickers.tpEnd.set(t.endHour ?? 22, t.endMin ?? 0);
+    if (t.emails && t.emails.length) {
+      selectedEmails = t.emails.slice();
+    }
+    paintEmailUI();
+    durationKind = t.duration || 'custom';
+    if (durationKind === 'custom') {
+      [...$('evDurationChips').children].forEach((c) => c.classList.toggle('on', c.dataset.dur === 'custom'));
+      // keep whatever calendar range is already picked; user can retune
+      paintCalendar();
+    } else {
+      setDuration(durationKind);
+    }
+    paintTemplates();
   }
 
   // Typing a new name clears the chip highlight so it becomes a fresh saved event on create
@@ -1215,6 +1297,7 @@
   }
 
   function setDuration(kind) {
+    durationKind = kind;
     [...$('evDurationChips').children].forEach((b) => b.classList.toggle('on', b.dataset.dur === kind));
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1281,6 +1364,7 @@
           rangeEnd = s;
         }
         [...$('evDurationChips').children].forEach((c) => c.classList.toggle('on', c.dataset.dur === 'custom'));
+        durationKind = 'custom';
         paintCalendar();
       };
       grid.appendChild(b);
@@ -1376,6 +1460,19 @@
     }
     const owner = selectedEmails.join(', ');
     const policyKeys = selectedPolicyKeys();
+    const startSnap = timePickers.tpStart.get();
+    const endSnap = timePickers.tpEnd.get();
+    // Save the typed event as a Choose Event chip immediately (name + policies + times + emails),
+    // then create the live instance. Recurring picks reuse this chip next time.
+    rememberTemplate(name, {
+      policyKeys,
+      startHour: startSnap.hour,
+      startMin: startSnap.min,
+      endHour: endSnap.hour,
+      endMin: endSnap.min,
+      emails: selectedEmails.slice(),
+      duration: durationKind,
+    });
     try {
       const created = await api('tc-events', {
         method: 'POST',
@@ -1393,16 +1490,27 @@
         setEventPolicies(row.id, policyKeys);
         markCreated(row.id);
       }
-      rememberTemplate(name, policyKeys);
+      // bump chip to top again after successful live create
+      rememberTemplate(name, {
+        policyKeys,
+        startHour: startSnap.hour,
+        startMin: startSnap.min,
+        endHour: endSnap.hour,
+        endMin: endSnap.min,
+        emails: selectedEmails.slice(),
+        duration: durationKind,
+      });
       selectedEmails.forEach(rememberEmail);
       closeEventForm();
-      toast('Event live — New Event closed. Hit + CREATE EVENT for another.');
+      toast('Event live — saved under Choose Event for next time.');
       eventTab = 'active';
       [...$('eventTabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === 'active'));
       loadAdminEvents();
     } catch {
-      $('evErr').textContent = 'Could not create event — check the admin code and retry.';
+      // Chip already saved above so typed work isn't lost if the live create fails
+      $('evErr').textContent = 'Saved under Choose Event, but live create failed — check admin code and retry.';
       $('evErr').classList.remove('hidden');
+      paintTemplates();
     }
   };
 
