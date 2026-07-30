@@ -301,9 +301,31 @@ em { font-style: normal; color: var(--blue); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
 .field-block { display: flex; flex-direction: column; gap: .45rem; }
 .field-label { font-size: .68rem; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
-.field-select, .form-card select {
-  background: var(--black); border: 1px solid var(--line); color: var(--text);
-  font-family: var(--mono); font-size: 1rem; padding: .8rem .7rem; min-height: 48px; width: 100%;
+.field-note { font-size: .68rem; line-height: 1.4; letter-spacing: 0; text-transform: none; }
+.policy-checks { display: flex; flex-direction: column; gap: .55rem; }
+.policy-check {
+  display: flex; align-items: flex-start; gap: .75rem;
+  background: var(--black); border: 1px solid var(--line); padding: .75rem .85rem;
+  cursor: pointer; color: var(--text); text-align: left; width: 100%;
+}
+.policy-check.on { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
+.policy-check .tc-check { margin-top: .1rem; }
+.policy-check-text { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+.policy-check-title { font-weight: 700; font-size: .88rem; }
+.policy-check-sub { font-size: .68rem; color: var(--muted); line-height: 1.35; }
+.policy-block details { margin-top: .45rem; }
+.policy-block summary {
+  cursor: pointer; color: var(--blue); font-size: .72rem; letter-spacing: .08em; list-style: none;
+}
+.policy-block summary::-webkit-details-marker { display: none; }
+.policy-full {
+  margin-top: .55rem; max-height: 42vh; overflow-y: auto;
+  font-size: .72rem; line-height: 1.55; color: var(--white-dim);
+  white-space: pre-wrap; border-top: 1px solid var(--line); padding-top: .55rem;
+}
+.policy-full h5 {
+  color: var(--white); font-family: var(--display); font-size: .72rem;
+  letter-spacing: .06em; margin: .7rem 0 .35rem;
 }
 .template-chips, .duration-chips, .email-chips {
   display: flex; flex-wrap: wrap; gap: .45rem;

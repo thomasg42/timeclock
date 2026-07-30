@@ -342,12 +342,13 @@
       body.innerHTML = '<div class="wiz-title">PICK YOUR EVENT</div><div class="wiz-sub">Which job are you clocking into?</div><div class="wiz-events" id="wizEvents"></div>';
       const list = $('wizEvents');
       events.forEach((ev) => {
-        const pack = policyForEvent(ev);
+        const packs = policiesForEvent(ev);
+        const packLabel = packs.length ? packs.map((p) => p.title).join(' + ') : 'No policies set';
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'profile-item';
         b.innerHTML = `<span><span class="profile-item-name">${esc(ev.name)}</span><br>
-          <span class="profile-item-sub">${fmtTime(ev.start_at)} → ${fmtTime(ev.end_at)} · ${esc(pack.title)}</span></span>`;
+          <span class="profile-item-sub">${fmtTime(ev.start_at)} → ${fmtTime(ev.end_at)} · ${esc(packLabel)}</span></span>`;
         b.onclick = () => { wiz.event = ev; wiz.step = 1; renderWizard(); };
         list.appendChild(b);
       });
@@ -504,48 +505,99 @@
     general: {
       id: 'general',
       title: 'General Staff Handbook',
+      blurb: 'All events, all staff — alcohol, conduct, attendance, clock-in, vest, breaks, phones, discipline.',
       bullets: [
         'Zero-tolerance alcohol/sobriety on site — termination if violated.',
         'Clock in/out on your own device with a live selfie — no buddy punching.',
         'Arrive ~15 min early, vest on, ready at your post.',
         'Professional conduct with clients, guests, and crew at all times.',
         'Breaks logged accurately; clock-out blocked while on break.',
+        'Personal phone use limited to clock-in/out, emergencies, or scheduled breaks.',
+        'Client names, event details, and pricing stay confidential.',
+      ],
+      sections: [
+        { h: 'Policy #1 — Alcohol & Sobriety (Zero Tolerance)', body: 'If you are at an event working, helping out, or on site in any capacity for JustUs Entertainment, you do not drink. At all. Not one drink. This applies whether you are clocked in or not, on break or not, in a vest or not, and whether alcohol is free. You may not arrive already under the influence, and you may not leave to drink and come back.\n\nCaught drinking or impaired: (1) immediate removal, unpaid for the rest of the shift, safe transport arranged — you will not drive yourself; (2) termination effective immediately — outside progressive discipline; (3) off the schedule. Rehire is owner discretion only, not a built-in second chance.\n\nIf offered a drink: “I appreciate it, but I\'m working.” If on impairing medication, tell your lead before the shift. If you see a coworker drinking, tell your lead immediately.' },
+        { h: '02 — Code of Conduct', body: 'Treat every client, guest, coworker, and vendor with respect. No yelling, profanity directed at others, discrimination, or harassment — zero tolerance. No drugs or impairing substances before or during a shift. Represent JustUs Entertainment professionally on site. Follow reasonable direction from event leads; concerns go through the chain of command, not in front of clients.' },
+        { h: '03 — Attendance, Punctuality & No-Show', body: 'Show up ~15 minutes early. Ready means parked, walked in, vest on, at your post. Up to 15 minutes late is workable only with a heads-up. More than 15 late or late with no heads-up: 1st verbal warning (logged), 2nd written, 3rd sat at home for that shift. No-call / no-show = suspended pending a management conversation. Schedule drops Wednesday — request off then. Day-of backing out is not acceptable except genuine emergencies.' },
+        { h: '04 — Clock-In / Clock-Out & Photo Verification', body: 'All shifts tracked in this TimeClock app. Clock in/out on your own device — buddy punching is termination for both people. Clock-in requires one live selfie. Select the correct event. Log breaks accurately. Review the shift summary at clock-out; report discrepancies same day.' },
+        { h: '05 — Appearance & High-Visibility Vest', body: 'Look professional. Wear your vest wherever issued (e.g. yellow PBR vests) at all times at your post. Closed-toe shoes for physical/outdoor posts. No offensive or alcohol/drug-branded apparel. The vest makes you findable, shows you are at post, signals support to security/police, and is a safety marker.' },
+        { h: '06 — Event Day Conduct', body: 'You are a guest on the client\'s property. Stay at your assigned post unless directed otherwise. No personal guests at your post. Do not consume client food/drink unless lead-approved — alcohol never. Handle equipment with care; report damage. Direct pricing/contract/complaint questions to your lead — do not negotiate for the company.' },
+        { h: '07 — Break Policy', body: '6+ hour shift: one 30-minute break (does not stack). Under 6 hours: no break. Log break start/end in the app. Do not leave post until lead confirms coverage. Do not clock out while a break is active. Policy #1 still applies on break.' },
+        { h: '08 — Cell Phone & Communication', body: 'Personal phone use limited to clock-in/out, emergencies, or scheduled breaks. No phone use in front of clients during active work. No public photos/videos of clients/guests/private details without written client and management approval. Ringer silent on shift.' },
+        { h: '09 — Progressive Discipline', body: 'Verbal warning → written warning → final written / suspension → termination. Zero-tolerance (no steps): drinking/impairment, harassment, discrimination, theft, buddy-punching.' },
+        { h: '10 — Confidentiality & Social Media', body: 'Client names, event details, guest info, and pricing are confidential. No personal social posts about a client event without written approval. Approved content must reflect positively. Do not share internal scheduling, pay, or staffing outside the company.' },
       ],
     },
     pbr: {
       id: 'pbr',
       title: 'PBR & Rodeo (Big Sky)',
-      stacksOn: 'general',
+      blurb: 'Event-specific — parking, ticket booth, skyboxes. Check this plus the General Handbook when both apply.',
       bullets: [
-        'Stacks on the General Handbook — alcohol, attendance, and vest rules still apply.',
         'Three stations: Parking Lot, Ticket Booth (scan + bracelets), Skyboxes & Crowd Control.',
-        'Wear the yellow high-vis vest the entire post — never take it off on site.',
+        'Yellow high-vis vest on the entire post — never take it off on site.',
         'Parking: never box cars in; front lot only for handicapped / reserved / authorities / competitors.',
-        'Ticket booth: security clears bags first, then one scan per person, match bracelet to ticket type.',
+        'Ticket booth: security clears bags first, then one scan per person; match bracelet to ticket type.',
         'Skyboxes are lanyard-only. No lanyard = no access.',
         'Know your post (top / middle / bottom) and gate times before doors open.',
+      ],
+      sections: [
+        { h: 'Overview', body: 'Stacks on the General Staff Policy Handbook. Three stations: (1) Parking Lot, (2) Ticket Booth — Scanning & Bracelets, (3) Skyboxes & Crowd Control. Know which station and position before gates open. When it is a rodeo, follow RODEO notes where they differ from PBR.' },
+        { h: 'Section 1 — Parking Lot', body: 'Parking crew has the most authority of any station — be firm, clear, keep cars moving. Never let anyone park behind another car or box someone in.\n\nPBR Lower / Roundabout: send everyone into the lot up to the left. Spectators: straight, then left into general lot. Trail users: same left lot; warn trail closes at 6:00 PM ~2 hours. VIP parks in general lot — NOT front. FRONT LOT only: Handicapped, Reserved, Authorities/police, Competitors. Vendors/staff: general only. Media: one vehicle up front; extras in the big lot.\n\nDrop-off/bus script: “Keep going straight, go PAST the road closed sign, then there’s a stop sign — stop there and hop out. Then take the left down the parking entrance and come back out the way you came in.” Emphasize past the road-closed sign.\n\nTop lot (PBR): blocked for buses; no through traffic; run drop-off up top; reserved/handicapped go to bottom roundabout. VIP/reserved post: keep entrance AND exit open.\n\nPBR staffing (3): top, middle, bottom (strongest / lead).\n\nRODEO: keep RIGHT lane free. Buses up right, drop at gate, out to bottom lot. Top/bottom gate people open for buses. Extra person guides bottom lot; use rocks for lines. Cowboy trailers may change layout — use discretion. Always know top / middle / bottom and roundabout vs gate.' },
+        { h: 'Section 2 — Ticket Booth', body: 'Security clears bags FIRST — then scan. One scan per person. Call out ticket type so bracelet person matches VIP vs GA. No outside drinks until finished. Usually NO re-entry — confirm with lead. Bracelets: snug but not tight (two bottom fingers underneath) — especially for kids. Backup phone ready; do not lock phone; use search by name if ticket fails.\n\nPresentation: smile, upbeat, yellow vest always on, no eating on post. Gates ~6:00 PM (sometimes 5:45); event ~7:00; real action ~7:30–8:00. Aspen Lane CLOSED — detour via Simkins Street.' },
+        { h: 'Section 3 — Skyboxes & Crowd Control', body: 'Skyboxes are lanyard-only. Skybox 1 closest to entrance; 1–4 first bleacher set; 5–7 next; 8–10 far end by GA. Number is on bottom-left of lanyard. Sky View Platform is the tallest separate section — wristband-only guests not allowed; stop lanyard hand-offs.\n\nBleachers: check lanyard/wristband on the walk path. After show starts, no one against the rail blocking views. Escalation after two warnings: call on walkie with position (South/East/North bleachers) for backup/escort.' },
       ],
     },
   };
   const DEFAULT_TEMPLATES = [
-    { id: 'tpl-general', name: 'General Event', policyKey: 'general' },
-    { id: 'tpl-pbr', name: 'PBR / Rodeo — Big Sky', policyKey: 'pbr' },
+    { id: 'tpl-pbr', name: 'PBR / Rodeo — Big Sky', policyKeys: ['general', 'pbr'] },
   ];
 
+  function normalizePolicyKeys(val) {
+    if (Array.isArray(val)) return val.filter((k) => POLICY_PACKS[k]);
+    if (typeof val === 'string' && POLICY_PACKS[val]) return [val];
+    return [];
+  }
+  function normalizeTemplate(t) {
+    if (!t || !t.name) return null;
+    if (/^general event$/i.test(String(t.name).trim())) return null; // retired placeholder
+    const policyKeys = normalizePolicyKeys(t.policyKeys != null ? t.policyKeys : t.policyKey);
+    return {
+      id: t.id || `tpl-${Date.now()}`,
+      name: String(t.name).trim(),
+      policyKeys: policyKeys.length ? policyKeys : [],
+    };
+  }
+  function migrateEventPolicyMap(raw) {
+    const out = {};
+    if (!raw || typeof raw !== 'object') return out;
+    Object.keys(raw).forEach((id) => {
+      const keys = normalizePolicyKeys(raw[id]);
+      if (keys.length) out[id] = keys;
+    });
+    return out;
+  }
   function loadMeta() {
     try {
       const raw = JSON.parse(localStorage.getItem(META_KEY) || '{}');
+      let templates = (Array.isArray(raw.templates) ? raw.templates : [])
+        .map(normalizeTemplate)
+        .filter(Boolean);
+      if (!templates.length) templates = DEFAULT_TEMPLATES.map((t) => ({ ...t, policyKeys: t.policyKeys.slice() }));
+      // ensure seeded PBR exists if someone wiped it while keeping other names
+      if (!templates.some((t) => /pbr|rodeo/i.test(t.name))) {
+        templates = [DEFAULT_TEMPLATES[0], ...templates];
+      }
       return {
         emails: Array.isArray(raw.emails) ? raw.emails : ['thomasg@forevergoldai.com'],
-        templates: Array.isArray(raw.templates) && raw.templates.length ? raw.templates : DEFAULT_TEMPLATES.slice(),
+        templates,
         archived: raw.archived && typeof raw.archived === 'object' ? raw.archived : {},
         deleted: raw.deleted && typeof raw.deleted === 'object' ? raw.deleted : {},
-        eventPolicy: raw.eventPolicy && typeof raw.eventPolicy === 'object' ? raw.eventPolicy : {},
+        eventPolicy: migrateEventPolicyMap(raw.eventPolicy),
       };
     } catch {
       return {
         emails: ['thomasg@forevergoldai.com'],
-        templates: DEFAULT_TEMPLATES.slice(),
+        templates: DEFAULT_TEMPLATES.map((t) => ({ ...t, policyKeys: t.policyKeys.slice() })),
         archived: {},
         deleted: {},
         eventPolicy: {},
@@ -561,15 +613,31 @@
     meta.emails = [e, ...meta.emails.filter((x) => x.toLowerCase() !== e)].slice(0, 20);
     saveMeta(meta);
   }
-  function setEventPolicy(eventId, policyKey) {
+  function setEventPolicies(eventId, policyKeys) {
     if (!eventId) return;
-    meta.eventPolicy[String(eventId)] = policyKey || 'general';
+    meta.eventPolicy[String(eventId)] = normalizePolicyKeys(policyKeys);
     saveMeta(meta);
   }
-  function policyForEvent(ev) {
-    const key = meta.eventPolicy[String(ev.id)]
-      || (/\bpbr\b|rodeo/i.test(ev.name || '') ? 'pbr' : 'general');
-    return POLICY_PACKS[key] || POLICY_PACKS.general;
+  function rememberTemplate(name, policyKeys) {
+    const n = String(name || '').trim();
+    if (!n) return;
+    const keys = normalizePolicyKeys(policyKeys);
+    const existing = meta.templates.find((t) => t.name.toLowerCase() === n.toLowerCase());
+    if (existing) {
+      existing.policyKeys = keys;
+      existing.name = n;
+    } else {
+      meta.templates = [{ id: `tpl-${Date.now()}`, name: n, policyKeys: keys }, ...meta.templates].slice(0, 24);
+    }
+    saveMeta(meta);
+  }
+  function policiesForEvent(ev) {
+    const stored = meta.eventPolicy[String(ev.id)];
+    if (stored && stored.length) return stored.map((k) => POLICY_PACKS[k]).filter(Boolean);
+    const tpl = meta.templates.find((t) => t.name.toLowerCase() === String(ev.name || '').toLowerCase());
+    if (tpl && tpl.policyKeys.length) return tpl.policyKeys.map((k) => POLICY_PACKS[k]).filter(Boolean);
+    if (/\bpbr\b|rodeo/i.test(ev.name || '')) return [POLICY_PACKS.general, POLICY_PACKS.pbr];
+    return [];
   }
   function isArchived(id) { return !!meta.archived[String(id)]; }
   function isDeleted(id) { return !!meta.deleted[String(id)]; }
@@ -588,14 +656,17 @@
     saveMeta(meta);
   }
 
-  function renderPolicyHtml(pack) {
-    const base = pack.stacksOn ? POLICY_PACKS[pack.stacksOn] : null;
-    let html = '';
-    if (base) {
-      html += `<div class="policy-block"><h4>${esc(base.title)}</h4><ul>${base.bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul></div>`;
-    }
-    html += `<div class="policy-block"><h4>${esc(pack.title)}</h4><ul>${pack.bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul></div>`;
-    return html;
+  function renderPolicyHtml(packs) {
+    const list = Array.isArray(packs) ? packs : (packs ? [packs] : []);
+    if (!list.length) return '<p class="muted">No policies attached to this event yet.</p>';
+    return list.map((pack) => {
+      const full = (pack.sections || []).map((s) => `<h5>${esc(s.h)}</h5>${esc(s.body)}`).join('');
+      return `<div class="policy-block">
+        <h4>${esc(pack.title)}</h4>
+        <ul>${(pack.bullets || []).map((b) => `<li>${esc(b)}</li>`).join('')}</ul>
+        ${full ? `<details><summary>FULL POLICY — READ WORD FOR WORD</summary><div class="policy-full">${full}</div></details>` : ''}
+      </div>`;
+    }).join('');
   }
 
   /* ============================================================
@@ -776,7 +847,7 @@
   }
 
   function openEventDetail(ev) {
-    const pack = policyForEvent(ev);
+    const packs = policiesForEvent(ev);
     const ended = ev.end_at && new Date(ev.end_at) <= new Date();
     $('evDetailTag').textContent = isArchived(ev.id) ? 'ARCHIVED EVENT' : ended ? 'PAST EVENT' : 'LIVE EVENT';
     $('evDetailBody').innerHTML = `
@@ -786,9 +857,10 @@
         <div><b>Ends</b> — ${new Date(ev.end_at).toLocaleString()}</div>
         <div><b>Report email</b> — ${esc(ev.owner_email || '—')}</div>
         <div><b>Sheet</b> — ${ev.report_sent ? 'sent' : ended ? 'pending / ended' : 'open'}</div>
+        <div><b>Policies</b> — ${packs.length ? esc(packs.map((p) => p.title).join(' · ')) : 'none selected'}</div>
       </div>
       <h3 class="section-label" style="margin-top:1rem">POLICIES</h3>
-      ${renderPolicyHtml(pack)}
+      ${renderPolicyHtml(packs)}
       <div class="ev-detail-actions">
         ${isArchived(ev.id)
           ? '<button class="big-btn outline" id="evRestoreBtn" type="button"><span class="big-btn-title">RESTORE TO ACTIVE</span></button>'
@@ -827,10 +899,32 @@
     if (!$('evOwner').value) $('evOwner').value = meta.emails[0] || '';
   }
 
-  function paintPolicySelect(selected) {
-    const sel = $('evPolicy');
-    sel.innerHTML = Object.values(POLICY_PACKS).map((p) =>
-      `<option value="${esc(p.id)}"${p.id === selected ? ' selected' : ''}>${esc(p.title)}</option>`).join('');
+  function paintPolicyChecks(selectedKeys) {
+    const selected = new Set(normalizePolicyKeys(selectedKeys));
+    const box = $('evPolicyChecks');
+    box.innerHTML = '';
+    Object.values(POLICY_PACKS).forEach((p) => {
+      const on = selected.has(p.id);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `policy-check${on ? ' on' : ''}`;
+      btn.dataset.policy = p.id;
+      btn.innerHTML = `
+        <span class="tc-check ${on ? 'checked' : ''}"></span>
+        <span class="policy-check-text">
+          <span class="policy-check-title">${esc(p.title)}</span>
+          <span class="policy-check-sub">${esc(p.blurb || '')}</span>
+        </span>`;
+      btn.onclick = () => {
+        if (selected.has(p.id)) selected.delete(p.id);
+        else selected.add(p.id);
+        paintPolicyChecks([...selected]);
+      };
+      box.appendChild(btn);
+    });
+  }
+  function selectedPolicyKeys() {
+    return [...$('evPolicyChecks').querySelectorAll('.policy-check.on')].map((b) => b.dataset.policy);
   }
 
   function paintTemplates() {
@@ -844,12 +938,25 @@
       b.onclick = () => {
         selectedTemplateId = t.id;
         $('evName').value = t.name;
-        paintPolicySelect(t.policyKey);
+        paintPolicyChecks(t.policyKeys || []);
         paintTemplates();
       };
       box.appendChild(b);
     });
   }
+
+  // Typing a new name clears the chip highlight so it becomes a fresh saved event on create
+  $('evName').addEventListener('input', () => {
+    const v = $('evName').value.trim().toLowerCase();
+    const match = meta.templates.find((t) => t.name.toLowerCase() === v);
+    if (match) {
+      selectedTemplateId = match.id;
+      paintPolicyChecks(match.policyKeys || []);
+    } else {
+      selectedTemplateId = null;
+    }
+    paintTemplates();
+  });
 
   function ymd(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
   function parseYmd(s) {
@@ -944,8 +1051,9 @@
     if (form.classList.contains('hidden')) return;
     meta = loadMeta();
     selectedTemplateId = null;
+    $('evName').value = '';
     paintTemplates();
-    paintPolicySelect('general');
+    paintPolicyChecks([]);
     paintEmailUI();
     rangeStart = localDate();
     rangeEnd = localDate();
@@ -982,7 +1090,7 @@
       return;
     }
     const owner = $('evOwner').value.trim();
-    const policyKey = $('evPolicy').value || 'general';
+    const policyKeys = selectedPolicyKeys();
     try {
       const created = await api('tc-events', {
         method: 'POST',
@@ -992,18 +1100,15 @@
           start_at: localISO(start),
           end_at: localISO(end),
           owner_email: owner,
-          policy_key: policyKey,
+          policy_keys: policyKeys,
         }),
       });
       const row = Array.isArray(created) ? created[0] : created;
-      if (row && row.id != null) setEventPolicy(row.id, policyKey);
+      if (row && row.id != null) setEventPolicies(row.id, policyKeys);
+      rememberTemplate(name, policyKeys);
       rememberEmail(owner);
-      if (!meta.templates.some((t) => t.name.toLowerCase() === name.toLowerCase())) {
-        meta.templates = [{ id: `tpl-${Date.now()}`, name, policyKey }, ...meta.templates].slice(0, 12);
-        saveMeta(meta);
-      }
       $('eventForm').classList.add('hidden');
-      toast('Event created — crew can clock in now.');
+      toast('Event created — saved with its policies for next time.');
       eventTab = 'active';
       [...$('eventTabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === 'active'));
       loadAdminEvents();

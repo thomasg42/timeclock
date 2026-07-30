@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20260729-events">
+<link rel="stylesheet" href="styles.css?v=20260729-events2">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>">
 </head>
 <body>
@@ -133,11 +133,13 @@
           <span class="field-label">Choose event</span>
           <div class="template-chips" id="evTemplates"></div>
           <label class="sr-only" for="evName">Event name</label>
-          <input type="text" id="evName" required placeholder="Or type a new event name" autocomplete="off">
+          <input type="text" id="evName" required placeholder="Type a new event — e.g. Wildlands" autocomplete="off">
+          <p class="field-note muted">Saved events show as chips above. Type a new name to create one — it sticks next to the others after you save.</p>
         </div>
         <div class="field-block">
-          <span class="field-label">Policy pack</span>
-          <select id="evPolicy" class="field-select"></select>
+          <span class="field-label">Policies that apply</span>
+          <div class="policy-checks" id="evPolicyChecks"></div>
+          <p class="field-note muted">Check every pack that applies. This event remembers them — you won’t re-pick next time.</p>
         </div>
         <div class="field-block">
           <span class="field-label">How long</span>
@@ -222,6 +224,6 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="config.js"></script>
-<script src="app.js?v=20260729-events"></script>
+<script src="app.js?v=20260729-events2"></script>
 </body>
 </html>
