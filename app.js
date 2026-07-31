@@ -88,7 +88,28 @@
   function show(view) {
     VIEWS.forEach((v) => $(`view-${v}`).classList.toggle('hidden', v !== view));
     window.scrollTo(0, 0);
+    if (view !== 'admin') stopAdminPoll();
   }
+
+  function spinnerHtml() {
+    return '<span class="tc-spinner" aria-hidden="true"></span> ';
+  }
+
+  /* ---------- admin live sync: poll while the dashboard is open so a
+     change made on another device shows up without hitting refresh ---------- */
+  let adminPollTimer = null;
+  function stopAdminPoll() {
+    if (adminPollTimer) { clearInterval(adminPollTimer); adminPollTimer = null; }
+  }
+  function startAdminPoll() {
+    stopAdminPoll();
+    adminPollTimer = setInterval(() => {
+      if (adminPinOk && !$('view-admin').classList.contains('hidden')) loadAdmin({ silent: true });
+    }, 20000);
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && adminPinOk && !$('view-admin').classList.contains('hidden')) loadAdmin({ silent: true });
+  });
 
   $('brandHome').onclick = () => show('home');
   $('btnGoCreate').onclick = () => show('create');
@@ -1055,7 +1076,7 @@
 
   function openAdmin() {
     show('admin');
-    if (adminPinOk) { $('adminGate').classList.add('hidden'); $('adminDash').classList.remove('hidden'); loadAdmin(); return; }
+    if (adminPinOk) { $('adminGate').classList.add('hidden'); $('adminDash').classList.remove('hidden'); loadAdmin(); startAdminPoll(); return; }
     adminPin = '';
     paintPin();
     $('adminGate').classList.remove('hidden');
@@ -1084,6 +1105,7 @@
         toast('Syncing admin state across devices…', false, 2200);
         await ensureMetaSynced({ allowPush: true });
         loadAdmin();
+        startAdminPoll();
       } catch {
         $('pinErr').classList.remove('hidden');
         $('pinDots').classList.add('shake');
@@ -1094,37 +1116,41 @@
     }
   });
 
-  async function loadAdmin() {
+  let lastPunchesSig = '';
+  async function loadAdmin(opts = {}) {
+    const silent = opts.silent === true;
     if (!$('adminDate').value) $('adminDate').value = localDate();
     const date = $('adminDate').value;
     const tbody = $('adminRows');
-    tbody.innerHTML = '<tr><td colspan="9" class="muted center">Loading…</td></tr>';
+    if (!silent) tbody.innerHTML = `<tr><td colspan="9" class="muted center">${spinnerHtml()}Loading…</td></tr>`;
     try {
       const punches = rows(await api(`tc-admin?pass=${encodeURIComponent(adminPinOk)}&date=${encodeURIComponent(date)}`))
         .sort((a, b) => String(a.clock_in).localeCompare(String(b.clock_in)));
-      if (!punches.length) {
-        tbody.innerHTML = '<tr><td colspan="9" class="muted center">No punches for this day.</td></tr>';
-      } else {
-        tbody.innerHTML = punches.map((p) => {
-          const h = shiftHours(p);
-          const photo = (url, label) => (url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${label}</a>` : '·');
-          return `<tr>
-            <td>${esc(p.profile_name)}</td>
-            <td>${esc(p.event_name || '')}</td>
-            <td>${fmtTime(p.clock_in)}</td>
-            <td>${fmtTime(p.break_start)}</td>
-            <td>${fmtTime(p.break_end)}</td>
-            <td>${p.break_taken ? '☑' : '☐'}</td>
-            <td>${p.status === 'out' ? fmtTime(p.clock_out) : '<b style="color:var(--in-green)">on clock</b>'}</td>
-            <td>${h != null ? h.toFixed(2) : '—'}</td>
-            <td>${photo(p.photo_selfie, 'SELFIE')}</td>
-          </tr>`;
-        }).join('');
+      const sig = punches.map((p) => [p.id, p.status, p.clock_out, p.break_end].join('~')).join('|');
+      if (!silent || sig !== lastPunchesSig) {
+        tbody.innerHTML = !punches.length
+          ? '<tr><td colspan="9" class="muted center">No punches for this day.</td></tr>'
+          : punches.map((p) => {
+            const h = shiftHours(p);
+            const photo = (url, label) => (url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${label}</a>` : '·');
+            return `<tr>
+              <td>${esc(p.profile_name)}</td>
+              <td>${esc(p.event_name || '')}</td>
+              <td>${fmtTime(p.clock_in)}</td>
+              <td>${fmtTime(p.break_start)}</td>
+              <td>${fmtTime(p.break_end)}</td>
+              <td>${p.break_taken ? '☑' : '☐'}</td>
+              <td>${p.status === 'out' ? fmtTime(p.clock_out) : '<b style="color:var(--in-green)">on clock</b>'}</td>
+              <td>${h != null ? h.toFixed(2) : '—'}</td>
+              <td>${photo(p.photo_selfie, 'SELFIE')}</td>
+            </tr>`;
+          }).join('');
       }
+      lastPunchesSig = sig;
     } catch {
-      tbody.innerHTML = '<tr><td colspan="9" class="form-err center">Couldn\'t load the sheet.</td></tr>';
+      if (!silent) tbody.innerHTML = '<tr><td colspan="9" class="form-err center">Couldn\'t load the sheet.</td></tr>';
     }
-    loadAdminEvents();
+    loadAdminEvents(opts);
   }
 
   $('eventTabs').addEventListener('click', (e) => {
@@ -1137,8 +1163,11 @@
 
   let durationKind = 'today';
 
-  async function loadAdminEvents() {
+  let lastEventsSig = '';
+  async function loadAdminEvents(opts = {}) {
+    const silent = opts.silent === true;
     const box = $('adminEvents');
+    if (!silent) box.innerHTML = `<p class="muted center">${spinnerHtml()}Loading…</p>`;
     try {
       await ensureMetaSynced({ allowPush: !!adminPinOk });
       const events = rows(await api('tc-events'))
@@ -1148,10 +1177,14 @@
       const shown = events
         .filter((ev) => eventTab === 'archived' ? isArchived(ev.id) : !isArchived(ev.id))
         .sort((a, b) => createdRank(b) - createdRank(a)); // newest created at top
-      box.innerHTML = shown.length ? '' : `<p class="muted center">${eventTab === 'archived' ? 'Archive is empty.' : 'No active events — create one.'}</p>`;
-      shown.forEach((ev) => box.appendChild(buildEventRow(ev)));
+      const sig = `${eventTab}::${shown.map((ev) => [ev.id, ev.name, ev.start_at, ev.end_at, ev.report_sent].join('~')).join('|')}`;
+      if (!silent || sig !== lastEventsSig) {
+        box.innerHTML = shown.length ? '' : `<p class="muted center">${eventTab === 'archived' ? 'Archive is empty.' : 'No active events — create one.'}</p>`;
+        shown.forEach((ev) => box.appendChild(buildEventRow(ev)));
+      }
+      lastEventsSig = sig;
     } catch {
-      box.innerHTML = '<p class="form-err center">Couldn\'t load events.</p>';
+      if (!silent) box.innerHTML = '<p class="form-err center">Couldn\'t load events.</p>';
     }
   }
 
