@@ -568,7 +568,7 @@ body::before {
   inset: 0;
   z-index: -2;
   background:
-    url("assets/justus-employee-showtime-bg.jpg") center 38% / cover no-repeat;
+    url("assets/justus-employee-showtime-bg.jpg") center 56% / cover no-repeat;
   transform: scale(1.015);
   filter: grayscale(1) sepia(1) saturate(3.8) hue-rotate(158deg) brightness(.68) contrast(1.18);
 }
@@ -597,6 +597,33 @@ body:has(#view-admin:not(.hidden))::after {
     linear-gradient(180deg, rgba(2, 8, 18, .36) 0%, rgba(2, 8, 18, .66) 52%, rgba(2, 8, 18, .94) 100%),
     radial-gradient(circle at 50% 20%, rgba(67, 205, 255, .14), transparent 35%),
     repeating-linear-gradient(90deg, transparent 0 78px, rgba(98, 222, 255, .025) 78px 79px);
+}
+
+/* Home = the gate of greatness. Select/Create = the shared spectator world. */
+body:has(#view-home:not(.hidden))::before {
+  background-image: url("assets/justus-home-gate-v2.jpg");
+  background-position: center 46%;
+  filter: brightness(.72) contrast(1.12) saturate(1.05);
+}
+
+body:has(#view-home:not(.hidden))::after {
+  background:
+    linear-gradient(180deg, rgba(0, 5, 18, .08) 0%, rgba(0, 7, 20, .18) 45%, rgba(0, 4, 12, .82) 100%),
+    radial-gradient(ellipse at 50% 49%, rgba(255, 255, 255, .17), transparent 26%),
+    radial-gradient(circle at 50% 42%, rgba(90, 200, 255, .18), transparent 38%);
+}
+
+body:has(#view-select:not(.hidden))::before,
+body:has(#view-create:not(.hidden))::before {
+  background-image: url("assets/justus-employee-showtime-bg.jpg");
+  background-position: center 56%;
+}
+
+body:has(#view-select:not(.hidden))::after,
+body:has(#view-create:not(.hidden))::after {
+  background:
+    linear-gradient(180deg, rgba(2, 7, 16, .2) 0%, rgba(2, 8, 18, .58) 56%, rgba(2, 5, 12, .92) 100%),
+    radial-gradient(circle at 50% 20%, rgba(90, 200, 255, .14), transparent 38%);
 }
 
 button,
@@ -885,6 +912,67 @@ body:has(#view-admin:not(.hidden)) .view-title {
 
 .home-actions {
   gap: .85rem;
+}
+
+body:has(#view-home:not(.hidden)) .topbar-right {
+  display: none;
+}
+
+#view-home {
+  min-height: calc(100dvh - 76px);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-bottom: clamp(1.25rem, 5vh, 3rem);
+}
+
+#view-home .ticket-edge {
+  display: none;
+}
+
+#view-home .hero {
+  margin-top: auto;
+  margin-bottom: clamp(1rem, 3vh, 1.5rem);
+  padding: clamp(1rem, 4vh, 2rem) 1rem;
+  border-color: rgba(255, 255, 255, .82);
+  background: linear-gradient(180deg, rgba(2, 8, 22, .2), rgba(2, 7, 18, .7));
+  box-shadow: inset 0 0 0 1px rgba(90, 200, 255, .25), 0 0 46px rgba(90, 200, 255, .22);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+#view-home .hero-clock {
+  font-size: clamp(4.8rem, 21vw, 8.4rem);
+  text-shadow:
+    0 0 10px rgba(255, 255, 255, .7),
+    0 0 34px rgba(90, 200, 255, .9),
+    5px 5px 0 rgba(6, 53, 91, .9);
+}
+
+#view-home .home-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#view-home .big-btn {
+  min-height: 92px;
+  background: rgba(3, 10, 24, .82);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, .78);
+  box-shadow: 0 4px 0 rgba(255, 255, 255, .82), 0 8px 0 rgba(47, 125, 255, .75), 0 18px 36px rgba(0, 0, 0, .4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+#view-home .big-btn:hover,
+#view-home .big-btn:active {
+  background: #fff;
+  color: #06101b;
+  border-color: #fff;
+}
+
+#view-home .admin-entry {
+  background: linear-gradient(145deg, rgba(14, 84, 145, .9), rgba(3, 12, 27, .9));
 }
 
 .card,
@@ -1397,6 +1485,41 @@ body:has(#view-admin:not(.hidden)) .view-title {
   #adminDash .event-list > .muted,
   #adminDash .event-list > .form-err {
     grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  body:has(#view-home:not(.hidden))::before {
+    background-image: url("assets/justus-home-gate-mobile-v2.jpg");
+    background-position: center center;
+  }
+
+  #view-home {
+    min-height: calc(100dvh - 72px);
+    padding-top: .6rem;
+    padding-bottom: .9rem;
+  }
+
+  #view-home .hero {
+    margin-top: auto;
+    padding: .75rem .6rem .85rem;
+  }
+
+  #view-home .hero-date {
+    font-size: .68rem;
+  }
+
+  #view-home .hero-clock {
+    font-size: clamp(3.8rem, 22vw, 5.4rem);
+  }
+
+  #view-home .home-actions {
+    grid-template-columns: 1fr;
+    gap: .68rem;
+  }
+
+  #view-home .big-btn {
+    min-height: 66px;
   }
 }
 

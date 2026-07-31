@@ -1,0 +1,213 @@
+/* JustUs clock-in clarity + backstage boss layer.
+   Loaded after styles.css so the two experience sheets stay separate. */
+
+/* Employee profile and clock-in: clean, bright, legible. */
+body:has(#view-profile:not(.hidden)) {
+  background: #edf7ff;
+}
+
+body:has(#view-profile:not(.hidden))::before {
+  background:
+    radial-gradient(circle at 50% 8%, rgba(90, 200, 255, .24), transparent 34%),
+    linear-gradient(145deg, #ffffff 0%, #edf8ff 54%, #d9efff 100%);
+  filter: none;
+}
+
+body:has(#view-profile:not(.hidden))::after {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .14), rgba(228, 245, 255, .78)),
+    radial-gradient(circle at 18% 20%, rgba(47, 125, 255, .08), transparent 24%),
+    radial-gradient(circle at 82% 30%, rgba(90, 200, 255, .12), transparent 25%);
+}
+
+#view-profile {
+  margin-top: clamp(1rem, 4vh, 2.5rem);
+  margin-bottom: 2rem;
+  border: 1px solid rgba(18, 108, 153, .2);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .92);
+  color: #07101a;
+  box-shadow: 0 28px 80px rgba(18, 108, 153, .18);
+}
+
+#view-profile .profile-head,
+#view-profile .hist-card,
+#view-profile .break-row,
+#view-profile .shift-card {
+  border-color: rgba(18, 108, 153, .18);
+  background: #fff;
+  color: #07101a;
+  box-shadow: 0 12px 32px rgba(18, 108, 153, .1);
+}
+
+#view-profile .worker-name,
+#view-profile .section-label,
+#view-profile .hist-name,
+#view-profile .shift-event,
+#view-profile .muted {
+  color: #17324a;
+  text-shadow: none;
+}
+
+#wizard.modal {
+  background: rgba(235, 247, 255, .94);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+#wizard .modal-card {
+  border: 1px solid rgba(18, 108, 153, .24);
+  background: #ffffff;
+  color: #07101a;
+  box-shadow: 0 30px 90px rgba(18, 108, 153, .22);
+}
+
+#wizard .step-tag,
+#wizard .wiz-title,
+#wizard .wiz-sub,
+#wizard .wiz-policy-list,
+#wizard .wiz-scroll-hint,
+#wizard .muted {
+  color: #17324a;
+  text-shadow: none;
+}
+
+#wizard .x-btn {
+  border-color: rgba(18, 108, 153, .24);
+  background: #edf8ff;
+  color: #0b4f8b;
+}
+
+#wizard .wiz-policy-scroll,
+#wizard .policy-block,
+#wizard .wiz-ack-check {
+  border-color: rgba(18, 108, 153, .2);
+  background: #fff;
+  color: #172331;
+  box-shadow: 0 10px 26px rgba(18, 108, 153, .08);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+#wizard .wiz-policy-scroll {
+  background: #f7fcff;
+}
+
+#wizard .policy-full,
+#wizard .policy-block li,
+#wizard .policy-block p {
+  color: #23384c;
+}
+
+#wizard .policy-block h4,
+#wizard .policy-full h5,
+#wizard .wiz-scroll-hint.ready {
+  color: #0b6fae;
+}
+
+#wizard .cam-wrap,
+#wizard .cam-frame {
+  border-color: rgba(18, 108, 153, .38);
+  background: #eaf7ff;
+}
+
+/* Admin: boss-level backstage command position. */
+body:has(#view-admin:not(.hidden))::before {
+  background-image: url("assets/justus-admin-boss-v2.jpg");
+  background-position: center 42%;
+  filter: brightness(.62) contrast(1.16) saturate(1.05);
+}
+
+body:has(#view-admin:not(.hidden))::after {
+  background:
+    radial-gradient(circle at 50% 8%, rgba(255, 255, 255, .5) 0 1px, transparent 2px) 0 0 / 54px 54px,
+    radial-gradient(circle at 20% 18%, rgba(90, 200, 255, .55) 0 1px, transparent 2px) 0 0 / 71px 71px,
+    radial-gradient(ellipse at 50% 22%, rgba(255, 255, 255, .2), transparent 29%),
+    linear-gradient(180deg, rgba(0, 5, 16, .18) 0%, rgba(0, 7, 20, .58) 62%, rgba(0, 4, 12, .94) 100%);
+}
+
+body:has(#view-admin:not(.hidden)) .topbar {
+  border-bottom-color: rgba(255, 255, 255, .82);
+  background: linear-gradient(180deg, rgba(2, 8, 19, .96), rgba(5, 24, 45, .76));
+  box-shadow: 0 0 44px rgba(90, 200, 255, .22), inset 0 -1px 0 #fff;
+}
+
+#view-admin {
+  position: relative;
+}
+
+#view-admin::before {
+  content: "";
+  position: fixed;
+  left: 50%;
+  top: 12%;
+  width: min(68vw, 720px);
+  height: 58vh;
+  z-index: -1;
+  pointer-events: none;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse, rgba(90, 200, 255, .2), transparent 67%);
+  filter: blur(18px);
+}
+
+#adminGate {
+  border: 1px solid rgba(255, 255, 255, .72);
+  background: linear-gradient(145deg, rgba(6, 24, 45, .9), rgba(2, 8, 18, .88));
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 255, 255, .04),
+    0 0 0 1px rgba(90, 200, 255, .28),
+    0 0 58px rgba(90, 200, 255, .28),
+    0 32px 90px rgba(0, 0, 0, .62);
+}
+
+#adminDash {
+  padding: clamp(1rem, 3vw, 1.8rem);
+  border: 1px solid rgba(255, 255, 255, .42);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(3, 12, 28, .86), rgba(5, 23, 42, .74));
+  box-shadow: 0 0 60px rgba(90, 200, 255, .16), 0 34px 90px rgba(0, 0, 0, .5);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.admin-context-tag {
+  border-color: rgba(255, 255, 255, .78);
+  background: linear-gradient(90deg, rgba(9, 49, 87, .92), rgba(23, 111, 174, .92), rgba(9, 49, 87, .92));
+  color: #fff;
+  box-shadow: 0 0 28px rgba(90, 200, 255, .4);
+  letter-spacing: .18em;
+}
+
+body:has(#view-admin:not(.hidden)) .view-title {
+  border-color: #fff;
+  background: linear-gradient(135deg, rgba(8, 36, 65, .96), rgba(2, 9, 21, .96));
+  box-shadow:
+    3px 3px 0 #fff,
+    7px 7px 0 #168ccd,
+    0 0 34px rgba(90, 200, 255, .38);
+}
+
+#adminDash .admin-controls,
+#adminDash .sheet-wrap,
+#adminDash .event-item,
+#adminDash .form-card {
+  border-color: rgba(255, 255, 255, .3);
+  background: rgba(3, 12, 27, .9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 20px 50px rgba(0, 0, 0, .3);
+}
+
+@media (max-width: 640px) {
+  body:has(#view-admin:not(.hidden))::before {
+    background-position: center 34%;
+  }
+
+  #view-profile {
+    width: calc(100% - 1.4rem);
+    margin: .7rem;
+    padding: 1rem .8rem 1.5rem;
+  }
+
+  #adminDash {
+    padding: .8rem;
+  }
+}

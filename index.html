@@ -9,7 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Bowlby+One+SC&family=IBM+Plex+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20260730-meta-sync">
+<link rel="stylesheet" href="styles.css?v=20260731-gate-entry">
+<link rel="stylesheet" href="clock-flow.css?v=20260731-boss-clean">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>">
 </head>
 <body>
@@ -21,7 +22,6 @@
   </button>
   <div class="topbar-right">
     <span id="liveClock" class="live-clock">--:--:--</span>
-    <button id="adminBtn" class="admin-link" type="button">ADMIN</button>
   </div>
 </header>
 
@@ -43,6 +43,10 @@
       <button class="big-btn outline" id="btnGoCreate" type="button">
         <span class="big-btn-title">CREATE PROFILE</span>
         <span class="big-btn-sub">First time here</span>
+      </button>
+      <button class="big-btn admin-entry" id="adminBtn" type="button">
+        <span class="big-btn-title">ADMIN</span>
+        <span class="big-btn-sub">Backstage command center</span>
       </button>
     </div>
   </section>
@@ -103,7 +107,7 @@
 
     <!-- dashboard -->
     <div id="adminDash" class="hidden">
-      <div class="admin-context-tag">BACKSTAGE / PRODUCTION CONTROL</div>
+      <div class="admin-context-tag">★ BACKSTAGE COMMAND CENTER ★</div>
       <h2 class="view-title">DAY <em>SHEET</em></h2>
       <div class="admin-controls">
         <input type="date" id="adminDate">
