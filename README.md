@@ -23,6 +23,7 @@ Event-staffing clock-in/clock-out app. Live at https://thomasg42.github.io/timec
 - `assets/justus-admin-backstage-bg.jpg` — original backstage production-control background
 - `assets/justus-home-gate-v2.jpg` + `justus-home-gate-mobile-v2.jpg` — responsive door-of-greatness entrance with two bouncers, sky/lights, and crowd at the bottom
 - `assets/justus-admin-boss-v2.jpg` — backstage command view behind the artists and DJ/production desk
+- `tests/self-clock-in.test.mjs` — headless-Chrome QA for the clock-in flow against a stubbed n8n backend and a fake camera (37 assertions: typed jobs, policy gating, new-profile path, recent-job chips, events-endpoint outage). Run with `node tests/self-clock-in.test.mjs` from this directory.
 
 ## Visual system
 - Home is its own gate-of-greatness scene with the time centered over the cracked-open venue door and only three actions: Select Profile, Create Profile, and Admin.
