@@ -460,6 +460,14 @@ em { font-style: normal; color: var(--blue); }
 .wiz-title { font-family: var(--display); font-size: 1.05rem; margin-bottom: .35rem; }
 .wiz-sub { color: var(--muted); font-size: .78rem; margin-bottom: 1rem; line-height: 1.5; }
 .wiz-events { display: flex; flex-direction: column; gap: .6rem; margin-bottom: .4rem; }
+.wiz-job { margin-top: 1rem; }
+.wiz-job-row { display: flex; gap: .45rem; }
+.wiz-job-row input {
+  flex: 1; min-width: 0; background: var(--black); border: 1px solid var(--line); color: var(--text);
+  font-family: var(--mono); font-size: 1rem; padding: .8rem .7rem; min-height: 48px;
+}
+.wiz-job-row .chip-btn { flex: none; min-width: 72px; }
+.wiz-job .template-chips { margin-top: .1rem; }
 .wiz-policy-list {
   font-size: .72rem; letter-spacing: .04em; margin: -.4rem 0 .7rem; text-align: center;
 }
@@ -1018,6 +1026,7 @@ body:has(#view-home:not(.hidden)) .topbar-right {
 
 .form-card input,
 .email-add-row input,
+.wiz-job-row input,
 .tp-type,
 .admin-controls input[type="date"] {
   border: 1px solid rgba(255, 255, 255, .24);
@@ -1029,12 +1038,14 @@ body:has(#view-home:not(.hidden)) .topbar-right {
 
 .form-card input::placeholder,
 .email-add-row input::placeholder,
+.wiz-job-row input::placeholder,
 .tp-type::placeholder {
   color: #7f90a4;
 }
 
 .form-card input:focus,
 .email-add-row input:focus,
+.wiz-job-row input:focus,
 .tp-type:focus,
 .admin-controls input[type="date"]:focus {
   border-color: var(--blue);

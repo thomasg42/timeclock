@@ -45,6 +45,12 @@
     return Math.max(0, ms / 3600000);
   };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // Worker-typed jobs get a deterministic id from the name, so two people typing
+  // the same job land on the same event_id and their hours group together.
+  const jobSlug = (name) => {
+    const body = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+    return body ? `job-${body}` : `job-${Date.now()}`;
+  };
 
   let toastTimer;
   function toast(msg, isErr = false, ms = 3200) {
@@ -339,15 +345,31 @@
 
   $('wizClose').onclick = () => { stopStream(); $('wizard').classList.add('hidden'); wiz = null; };
 
+  /* one-tap chips for jobs this worker already clocked into, plus saved admin job names */
+  function recentJobNames(events) {
+    const seen = new Set((events || []).map((ev) => String(ev.name || '').trim().toLowerCase()));
+    const out = [];
+    const push = (n) => {
+      const clean = String(n || '').trim();
+      const key = clean.toLowerCase();
+      if (clean.length < 2 || seen.has(key)) return;
+      seen.add(key);
+      out.push(clean);
+    };
+    (current.punches || []).forEach((p) => push(p.event_name)); // already newest-first
+    (meta.templates || []).forEach((t) => push(t.name));
+    return out.slice(0, 6);
+  }
+
   async function renderWizard() {
     if (!wiz) return;
     const body = $('wizBody');
     stopStream();
 
-    /* step 0 — pick event */
+    /* step 0 — what's this job for? (scheduled event, recent job, or typed) */
     if (wiz.step === 0) {
-      $('wizStep').textContent = 'STEP 1/4 — EVENT';
-      body.innerHTML = '<div class="wiz-title">PICK YOUR EVENT</div><div class="wiz-sub">Loading events…</div>';
+      $('wizStep').textContent = 'STEP 1 — JOB';
+      body.innerHTML = '<div class="wiz-title">WHAT\'S THIS JOB FOR?</div><div class="wiz-sub">Checking today\'s events…</div>';
       let events = [];
       try {
         meta = loadMeta();
@@ -355,25 +377,71 @@
         await ensureMetaSynced({ allowPush: false });
         events = rows(await api('tc-events')).map(applyEventEdit).filter((ev) =>
           !isMetaEvent(ev) && !isDeleted(ev.id) && !isArchived(ev.id) && (!ev.end_at || new Date(ev.end_at) > new Date()));
-      } catch { /* fall through */ }
-      if (!events.length) {
-        body.innerHTML = `
-          <div class="wiz-title">NO OPEN EVENTS</div>
-          <div class="wiz-sub">There's no event to clock into yet. Ask the admin to create today's event, then try again.</div>`;
-        return;
-      }
-      body.innerHTML = '<div class="wiz-title">PICK YOUR EVENT</div><div class="wiz-sub">Which job are you clocking into?</div><div class="wiz-events" id="wizEvents"></div>';
+      } catch { /* no scheduled events reachable — typing a job still works */ }
+
+      const sub = events.length
+        ? 'Tap a scheduled event, or type what you\'re working on.'
+        : 'No event is scheduled right now — just type what you\'re working on.';
+      body.innerHTML = `
+        <div class="wiz-title">WHAT'S THIS JOB FOR?</div>
+        <div class="wiz-sub">${sub}</div>
+        ${events.length ? '<div class="wiz-events" id="wizEvents"></div>' : ''}
+        <div class="field-block wiz-job">
+          <span class="field-label">${events.length ? 'Or type the job' : 'Type the job'}</span>
+          <div class="wiz-job-row">
+            <input id="wizJobName" type="text" maxlength="60" autocomplete="off"
+                   enterkeyhint="go" placeholder="e.g. Maintenance on Midtown">
+            <button class="chip-btn primary" id="wizJobGo" type="button">USE</button>
+          </div>
+          <div class="template-chips" id="wizJobChips"></div>
+          <p class="form-err hidden" id="wizJobErr"></p>
+        </div>`;
+
+      const choose = (ev) => { wiz.event = ev; wiz.step = 1; renderWizard(); };
+
       const list = $('wizEvents');
-      events.forEach((ev) => {
-        const packs = policiesForEvent(ev);
-        const packLabel = packs.length ? packs.map((p) => p.title).join(' + ') : 'No policies set';
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'profile-item';
-        b.innerHTML = `<span><span class="profile-item-name">${esc(ev.name)}</span><br>
-          <span class="profile-item-sub">${fmtTime(ev.start_at)} → ${fmtTime(ev.end_at)} · ${esc(packLabel)}</span></span>`;
-        b.onclick = () => { wiz.event = ev; wiz.step = 1; renderWizard(); };
-        list.appendChild(b);
+      if (list) {
+        events.forEach((ev) => {
+          const packs = policiesForEvent(ev);
+          const packLabel = packs.length ? packs.map((p) => p.title).join(' + ') : 'No policies set';
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'profile-item';
+          b.innerHTML = `<span><span class="profile-item-name">${esc(ev.name)}</span><br>
+            <span class="profile-item-sub">${fmtTime(ev.start_at)} → ${fmtTime(ev.end_at)} · ${esc(packLabel)}</span></span>`;
+          b.onclick = () => choose(ev);
+          list.appendChild(b);
+        });
+      }
+
+      const input = $('wizJobName');
+      const err = $('wizJobErr');
+      const useTyped = () => {
+        const clean = String(input.value || '').trim().replace(/\s+/g, ' ');
+        if (clean.length < 2) {
+          err.textContent = 'Type what the job is first.';
+          err.classList.remove('hidden');
+          input.focus();
+          return;
+        }
+        // Typing the name of a live scheduled event clocks into that real event,
+        // so its policy packs still apply instead of being bypassed.
+        const scheduled = events.find((ev) => String(ev.name || '').trim().toLowerCase() === clean.toLowerCase());
+        choose(scheduled || { id: jobSlug(clean), name: clean, adhoc: true });
+      };
+      $('wizJobGo').onclick = useTyped;
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); useTyped(); }
+      });
+      input.addEventListener('input', () => err.classList.add('hidden'));
+
+      const chips = $('wizJobChips');
+      recentJobNames(events).forEach((name) => {
+        const c = document.createElement('button');
+        c.type = 'button';
+        c.textContent = name;
+        c.onclick = () => { input.value = name; useTyped(); };
+        chips.appendChild(c);
       });
       return;
     }
@@ -381,7 +449,8 @@
     /* step 1 — selfie */
     if (wiz.step === 1) {
       const shot = SHOTS[0];
-      $('wizStep').textContent = 'STEP 2/4 — SELFIE';
+      const needsPolicies = policiesForEvent(wiz.event).length > 0;
+      $('wizStep').textContent = needsPolicies ? 'STEP 2/4 — SELFIE' : 'STEP 2/3 — SELFIE';
       body.innerHTML = `
         <div class="wiz-title">${shot.title}</div>
         <div class="wiz-sub">${shot.sub} <b>Required.</b></div>
@@ -423,10 +492,18 @@
         retake.onclick = () => renderWizard();
         const next = document.createElement('button');
         next.type = 'button';
-        next.className = 'big-btn primary';
-        next.innerHTML = '<span class="big-btn-title">CONTINUE →</span>';
-        next.onclick = () => { wiz.step = 2; renderWizard(); };
+        next.id = 'wizPunch';
+        // No policy pack on this job (typed jobs never have one) — the photo IS the last step.
+        next.className = needsPolicies ? 'big-btn primary' : 'big-btn green';
+        next.innerHTML = `<span class="big-btn-title">${needsPolicies ? 'CONTINUE →' : '⏱ CLOCK IN'}</span>`;
+        next.onclick = needsPolicies
+          ? () => { wiz.step = 2; renderWizard(); }
+          : () => submitClockIn();
         $('camActions').append(retake, next);
+        if (!needsPolicies && !$('wizErr')) {
+          $('camActions').insertAdjacentHTML('afterend',
+            '<p class="form-err hidden" id="wizErr" style="margin-top:.7rem"></p>');
+        }
       };
 
       $('camSnap').onclick = () => {
@@ -447,11 +524,11 @@
     if (wiz.step === 2) {
       meta = loadMeta();
       const packs = policiesForEvent(wiz.event);
-      $('wizStep').textContent = packs.length ? 'STEP 3/4 — POLICIES' : 'STEP 3/4 — POLICIES';
+      $('wizStep').textContent = packs.length ? 'STEP 3/4 — POLICIES' : 'STEP 3/3 — CLOCK IN';
       if (!packs.length) {
         body.innerHTML = `
-          <div class="wiz-title">NO POLICIES ON THIS EVENT</div>
-          <div class="wiz-sub">Admin didn’t attach a policy pack. You can still clock in — ask your lead if something’s missing.</div>
+          <div class="wiz-title">READY TO CLOCK IN</div>
+          <div class="wiz-sub">No policy pack on <b>${esc(wiz.event.name)}</b>. Hit the button and you're on the clock.</div>
           <div class="wiz-actions">
             <button class="big-btn green" id="wizPunch" type="button"><span class="big-btn-title">⏱ CLOCK IN NOW</span></button>
           </div>
@@ -506,7 +583,7 @@
     }
 
     /* step 3 — congratulations (shown after successful punch) */
-    $('wizStep').textContent = 'STEP 4/4 — DONE';
+    $('wizStep').textContent = policiesForEvent(wiz.event).length ? 'STEP 4/4 — DONE' : 'STEP 3/3 — DONE';
     body.innerHTML = `
       <div class="wiz-congrats">
         <div class="wiz-title">CONGRATULATIONS</div>
@@ -547,6 +624,7 @@
     if (!btn) return;
     btn.disabled = true;
     const title = btn.querySelector('.big-btn-title');
+    const originalLabel = title ? title.textContent : '';
     if (title) title.textContent = 'STAMPING…';
     try {
       await api('tc-punch', {
@@ -572,9 +650,11 @@
       if (err) {
         err.textContent = 'Clock-in failed — check signal and try again.';
         err.classList.remove('hidden');
+      } else {
+        toast('Clock-in failed — check signal and try again.', true);
       }
       btn.disabled = false;
-      if (title) title.textContent = 'OK — CLOCK IN';
+      if (title) title.textContent = originalLabel;
     }
   }
 
