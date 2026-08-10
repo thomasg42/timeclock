@@ -220,9 +220,27 @@ body:has(#view-admin:not(.hidden)) .view-title {
     0 0 34px rgba(90, 200, 255, .38);
 }
 
+#adminDash .crew-owner .field-note,
+#adminDash .crew-mail {
+  color: #9fb2c6;
+}
+
+#adminDash .crew-owner .wiz-job-row input {
+  border: 1px solid rgba(255, 255, 255, .24);
+  border-radius: 8px;
+  background: rgba(2, 6, 12, .75);
+  color: #fff;
+}
+
+#adminDash .crew-owner .wiz-job-row input::placeholder {
+  color: #7f90a4;
+}
+
 #adminDash .admin-controls,
 #adminDash .sheet-wrap,
 #adminDash .event-item,
+#adminDash .crew-owner,
+#adminDash .crew-item,
 #adminDash .form-card {
   border-color: rgba(255, 255, 255, .3);
   background: rgba(3, 12, 27, .9);

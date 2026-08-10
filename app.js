@@ -1197,6 +1197,7 @@
   });
 
   let lastPunchesSig = '';
+  let lastCrewSig = '';
   async function loadAdmin(opts = {}) {
     const silent = opts.silent === true;
     if (!$('adminDate').value) $('adminDate').value = localDate();
@@ -1230,8 +1231,106 @@
     } catch {
       if (!silent) tbody.innerHTML = '<tr><td colspan="9" class="form-err center">Couldn\'t load the sheet.</td></tr>';
     }
+    loadCrew(opts);
     loadAdminEvents(opts);
   }
+
+  /* ============================================================
+     CREW — who the owner has cleared for their own weekly sheet
+     ============================================================ */
+  async function loadCrew(opts = {}) {
+    const box = $('adminCrew');
+    if (!box) return;
+    const silent = opts.silent === true;
+    if (!silent && !box.children.length) box.innerHTML = `<p class="muted center">${spinnerHtml()}Loading crew…</p>`;
+    let crew;
+    try {
+      crew = rows(await api('tc-profiles'));
+    } catch {
+      if (!silent) box.innerHTML = '<p class="form-err center">Couldn\'t load the crew.</p>';
+      return;
+    }
+    crew.sort((a, b) => `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`));
+    const sig = crew.map((p) => `${p.id}~${p.weekly_email === true}`).join('|');
+    if (silent && sig === lastCrewSig) return;
+    lastCrewSig = sig;
+
+    box.innerHTML = '';
+    if (!crew.length) {
+      box.innerHTML = '<p class="muted center">No profiles yet.</p>';
+    }
+    crew.forEach((p) => {
+      const on = p.weekly_email === true;
+      const row = document.createElement('div');
+      row.className = 'crew-item';
+      row.innerHTML = `
+        <span class="crew-who">
+          <span class="crew-name">${esc(p.first_name)} ${esc(p.last_name)}</span>
+          <span class="crew-mail">${esc(p.email || 'no email on file')}</span>
+        </span>`;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `crew-toggle${on ? ' on' : ''}`;
+      btn.textContent = on ? 'WEEKLY SHEET: ON' : 'WEEKLY SHEET: OFF';
+      btn.disabled = !p.email;
+      if (!p.email) btn.title = 'This profile has no email address.';
+      btn.onclick = async () => {
+        const next = !(p.weekly_email === true);
+        btn.disabled = true;
+        btn.textContent = 'SAVING…';
+        try {
+          await api('tc-perm', {
+            method: 'POST',
+            body: JSON.stringify({ pass: adminPinOk, profile_id: p.id, weekly_email: next }),
+          });
+          p.weekly_email = next;
+          lastCrewSig = '';
+          btn.classList.toggle('on', next);
+          btn.textContent = next ? 'WEEKLY SHEET: ON' : 'WEEKLY SHEET: OFF';
+          toast(next
+            ? `${p.first_name} will get their own sheet every Tuesday.`
+            : `${p.first_name} will no longer be emailed.`);
+        } catch {
+          btn.textContent = on ? 'WEEKLY SHEET: ON' : 'WEEKLY SHEET: OFF';
+          toast('Couldn\'t save that — try again.', true);
+        }
+        btn.disabled = false;
+      };
+      row.appendChild(btn);
+      box.appendChild(row);
+    });
+    loadOwnerEmails();
+  }
+
+  async function loadOwnerEmails() {
+    const input = $('ownerEmails');
+    if (!input || input.dataset.loaded === '1' || document.activeElement === input) return;
+    try {
+      const found = rows(await api(`tc-settings?pass=${encodeURIComponent(adminPinOk)}`))
+        .find((s) => s.setting_key === 'owner_emails');
+      input.value = (found && found.setting_value) || '';
+      input.dataset.loaded = '1';
+    } catch { /* leave whatever is typed */ }
+  }
+
+  $('ownerEmailsSave').onclick = async () => {
+    const btn = $('ownerEmailsSave');
+    const value = $('ownerEmails').value.trim();
+    if (value && !/.+@.+\..+/.test(value)) { toast('That doesn\'t look like an email address.', true); return; }
+    btn.disabled = true;
+    btn.textContent = 'SAVING…';
+    try {
+      await api('tc-settings', {
+        method: 'POST',
+        body: JSON.stringify({ pass: adminPinOk, key: 'owner_emails', value }),
+      });
+      toast('Owner email saved.');
+    } catch {
+      toast('Couldn\'t save the owner email — try again.', true);
+    }
+    btn.disabled = false;
+    btn.textContent = 'SAVE';
+  };
 
   $('eventTabs').addEventListener('click', (e) => {
     const tab = e.target.closest('[data-tab]');

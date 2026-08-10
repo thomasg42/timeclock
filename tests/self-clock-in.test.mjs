@@ -31,8 +31,9 @@ const check = (name, cond, detail = '') => {
 function makeBackend(events) {
   return {
     events,
-    profiles: [{ id: 1, first_name: 'Dee', last_name: 'Ramos', email: 'dee@justus.test', phone: '4065550100' }],
+    profiles: [{ id: 1, first_name: 'Dee', last_name: 'Ramos', email: 'dee@justus.test', phone: '4065550100', weekly_email: null }],
     punches: [],
+    settings: [{ id: 1, setting_key: 'owner_emails', setting_value: 'owner@justus.test' }],
     calls: [],
   };
 }
@@ -80,6 +81,27 @@ async function runScenario(label, events, drive) {
       body: JSON.stringify(o),
     });
 
+    if (route === 'tc-admin') {
+      if (qs.get('pass') !== '1111') return req.respond({ status: 401, headers: { 'Access-Control-Allow-Origin': '*' }, body: '{"error":"unauthorized"}' });
+      return json(be.punches.length ? be.punches : [{}]);
+    }
+    if (route === 'tc-perm') {
+      if (!body || body.pass !== '1111') return req.respond({ status: 401, headers: { 'Access-Control-Allow-Origin': '*' }, body: '{"error":"unauthorized"}' });
+      const row = be.profiles.find((p) => String(p.id) === String(body.profile_id));
+      row.weekly_email = body.weekly_email;
+      row.perm_set_at = '2026-08-08T16:00:00-06:00';
+      return json(row);
+    }
+    if (route === 'tc-settings') {
+      const pass = req.method() === 'GET' ? qs.get('pass') : (body || {}).pass;
+      if (pass !== '1111') return req.respond({ status: 401, headers: { 'Access-Control-Allow-Origin': '*' }, body: '{"error":"unauthorized"}' });
+      if (req.method() === 'POST') {
+        const row = be.settings.find((s) => s.setting_key === body.key);
+        row.setting_value = body.value;
+        return json(row);
+      }
+      return json(be.settings);
+    }
     if (route === 'tc-profiles' && req.method() === 'GET') return json(be.profiles);
     if (route === 'tc-profiles' && req.method() === 'POST') {
       const row = { id: be.profiles.length + 1, ...body };
@@ -166,8 +188,7 @@ await runScenario('A: no events, typed job', [], async (page, be) => {
   check('A: rejects a 1-char job name', true);
 
   await page.focus('#wizJobName');
-  await page.keyboard.down('Meta'); await page.keyboard.press('a'); await page.keyboard.up('Meta');
-  await page.keyboard.press('Backspace');
+  await page.$eval('#wizJobName', (el) => { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); });
   await page.type('#wizJobName', '  Maintenance on   Midtown ');
   await page.keyboard.press('Enter'); // enter key path
 
@@ -383,6 +404,67 @@ await runScenario('G: events endpoint down', 'BOOM', async (page, be) => {
   await wait(page, '#wizDone');
   const p = be.calls.find((c) => c.route === 'tc-punch' && c.body.action === 'clock_in');
   check('G: clocked in despite the events outage', p.body.event_name === 'Storm cleanup', p.body.event_name);
+});
+
+/* =========================================================
+   Scenario H — admin grants weekly-sheet permission + owner email
+   ========================================================= */
+await runScenario('H: admin crew permissions', [], async (page, be) => {
+  be.profiles.push(
+    { id: 2, first_name: 'Alex', last_name: 'Boone', email: 'alex@justus.test', weekly_email: true },
+    { id: 3, first_name: 'No', last_name: 'Mail', email: '', weekly_email: null },
+  );
+  await wait(page, '#adminBtn');
+  await page.click('#adminBtn');
+  await wait(page, '#pinPad');
+  for (const d of ['1', '1', '1', '1']) await clickText(page, '#pinPad button', d);
+  await wait(page, '#adminCrew .crew-item');
+
+  const labels = await page.$$eval('#adminCrew .crew-toggle', (els) => els.map((e) => e.textContent.trim()));
+  const names = await page.$$eval('#adminCrew .crew-name', (els) => els.map((e) => e.textContent.trim()));
+  check('H: crew listed alphabetically', names.join('|') === 'Alex Boone|Dee Ramos|No Mail', names.join('|'));
+  check('H: existing permission renders ON', labels[0].includes('ON'), labels[0]);
+  check('H: unset permission renders OFF', labels[1].includes('OFF'), labels[1]);
+
+  const noMailDisabled = await page.$$eval('#adminCrew .crew-toggle', (els) => els[2].disabled);
+  check('H: profile with no email cannot be switched on', noMailDisabled === true);
+
+  // owner email loaded from the backend
+  const owner = await page.$eval('#ownerEmails', (el) => el.value);
+  check('H: owner email prefilled from settings', owner === 'owner@justus.test', owner);
+
+  // grant Dee permission
+  await page.$$eval('#adminCrew .crew-toggle', (els) => els[1].click());
+  await page.waitForFunction(() => {
+    const b = document.querySelectorAll('#adminCrew .crew-toggle')[1];
+    return b && !b.disabled && b.textContent.includes('ON');
+  }, { timeout: 8000 });
+  const permCall = be.calls.filter((c) => c.route === 'tc-perm').pop();
+  check('H: perm POST carries the admin pass and the right profile',
+    permCall.body.pass === '1111' && String(permCall.body.profile_id) === '1' && permCall.body.weekly_email === true,
+    JSON.stringify(permCall.body));
+  check('H: backend state actually flipped', be.profiles.find((p) => p.id === 1).weekly_email === true);
+
+  // toggling back off
+  await page.$$eval('#adminCrew .crew-toggle', (els) => els[1].click());
+  await page.waitForFunction(() => {
+    const b = document.querySelectorAll('#adminCrew .crew-toggle')[1];
+    return b && !b.disabled && b.textContent.includes('OFF');
+  }, { timeout: 8000 });
+  check('H: permission is revocable', be.profiles.find((p) => p.id === 1).weekly_email === false);
+
+  // save a new owner email
+  await page.focus('#ownerEmails');
+  await page.$eval('#ownerEmails', (el) => { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.type('#ownerEmails', 'boss@justus.test, books@justus.test');
+  await page.click('#ownerEmailsSave');
+  await page.waitForFunction(() => document.getElementById('ownerEmailsSave').textContent.trim() === 'SAVE', { timeout: 8000 });
+  const setCall = be.calls.filter((c) => c.route === 'tc-settings' && c.method === 'POST').pop();
+  check('H: owner emails saved with pass',
+    setCall.body.pass === '1111' && setCall.body.key === 'owner_emails' && setCall.body.value === 'boss@justus.test, books@justus.test',
+    JSON.stringify(setCall.body));
+  check('H: worker-facing calls never carried the pass',
+    !be.calls.some((c) => ['tc-profiles', 'tc-punch', 'tc-history'].includes(c.route) && c.body && c.body.pass));
 });
 
 server.close();

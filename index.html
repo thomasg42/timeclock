@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Bowlby+One+SC&family=IBM+Plex+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20260808-selfclock">
-<link rel="stylesheet" href="clock-flow.css?v=20260808-selfclock">
+<link rel="stylesheet" href="styles.css?v=20260809-crew-weekly">
+<link rel="stylesheet" href="clock-flow.css?v=20260809-crew-weekly">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>">
 </head>
 <body>
@@ -123,6 +123,19 @@
           <tbody id="adminRows"><tr><td colspan="9" class="muted center">Loading…</td></tr></tbody>
         </table>
       </div>
+
+      <h3 class="section-label">CREW &amp; WEEKLY TIME SHEETS</h3>
+      <div class="crew-owner">
+        <span class="field-label">Business owner email(s)</span>
+        <div class="wiz-job-row">
+          <label class="sr-only" for="ownerEmails">Business owner emails</label>
+          <input type="text" id="ownerEmails" placeholder="owner@business.com, you@business.com" autocomplete="email">
+          <button type="button" class="chip-btn primary" id="ownerEmailsSave">SAVE</button>
+        </div>
+        <p class="field-note muted">The owner always gets one combined sheet of everyone's shifts. Separate multiple addresses with commas.</p>
+      </div>
+      <p class="event-hint muted center">Pay week runs Wednesday → Tuesday. Turn someone ON and their own time sheet — job, clock in, clock out, hours per shift — is emailed to them Tuesday night too.</p>
+      <div id="adminCrew" class="crew-list"></div>
 
       <h3 class="section-label">EVENTS</h3>
       <div class="event-tabs" id="eventTabs" role="tablist">
@@ -256,6 +269,6 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="config.js"></script>
-<script src="app.js?v=20260808-selfclock"></script>
+<script src="app.js?v=20260809-crew-weekly"></script>
 </body>
 </html>

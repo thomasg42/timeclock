@@ -302,6 +302,25 @@ em { font-style: normal; color: var(--blue); }
 .event-item:active { background: var(--panel-2); }
 .event-item .ev-name { font-weight: 700; }
 .event-item .ev-times { color: var(--muted); font-size: .7rem; }
+/* crew + weekly time sheet permissions */
+.crew-owner { background: var(--black); border: 1px solid var(--line); padding: .85rem; margin-bottom: .7rem; }
+.crew-owner .field-label { display: block; margin-bottom: .45rem; }
+.crew-list { display: flex; flex-direction: column; gap: .55rem; margin-bottom: 1rem; }
+.crew-item {
+  display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+  background: var(--black); border: 1px solid var(--line); padding: .7rem .85rem;
+}
+.crew-who { display: flex; flex-direction: column; gap: .15rem; min-width: 0; flex: 1; }
+.crew-name { font-weight: 700; font-size: .9rem; }
+.crew-mail { font-size: .68rem; color: var(--muted); word-break: break-all; }
+.crew-toggle {
+  flex: none; min-height: 44px; padding: .55rem .8rem;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+  font-size: .66rem; letter-spacing: .1em; font-weight: 700; cursor: pointer;
+}
+.crew-toggle.on { background: var(--in-green); border-color: var(--in-green); color: #04140a; }
+.crew-toggle:disabled { opacity: .45; cursor: not-allowed; }
+
 .badge { font-size: .62rem; letter-spacing: .12em; padding: .25rem .5rem; border: 1px solid currentColor; flex: none; }
 .badge.live { color: var(--in-green); }
 .badge.done { color: var(--muted); }
