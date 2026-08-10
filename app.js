@@ -805,6 +805,7 @@
   let meta = loadMeta();
   let cloudPushTimer = null;
   let cloudSyncing = false;
+  let cloudPushPromise = null;
   let lastPushedAt = 0;
   let metaSyncReady = null;
 
@@ -933,50 +934,82 @@
   }
 
   async function pushCloudMeta() {
-    if (!adminPinOk || cloudSyncing) return false;
-    const snapshot = {
-      v: 1,
-      updatedAt: meta.updatedAt || Date.now(),
-      emails: meta.emails,
-      templates: meta.templates,
-      archived: meta.archived,
-      deleted: meta.deleted,
-      eventPolicy: meta.eventPolicy,
-      createdAt: meta.createdAt,
-      eventEdits: meta.eventEdits,
-    };
-    if (snapshot.updatedAt <= lastPushedAt) return false;
-    const owner = encodeMetaBlob(snapshot);
-    if (owner.length > 100000) {
-      console.warn('[timeclock] meta blob too large to sync');
-      return false;
-    }
-    cloudSyncing = true;
-    try {
-      try {
-        const prior = await listMetaEventRows();
-        prior.forEach(({ ev }) => {
-          if (ev && ev.id != null) meta.deleted[String(ev.id)] = true;
-        });
-      } catch { /* still push */ }
-
-      const created = await api('tc-events', {
-        method: 'POST',
-        body: JSON.stringify({
-          pass: adminPinOk,
-          name: META_EVENT_NAME,
-          start_at: '2099-01-01T00:00:00-07:00',
-          end_at: '2099-01-01T00:01:00-07:00',
-          owner_email: owner,
-        }),
-      });
-      const row = Array.isArray(created) ? created[0] : created;
-      if (row && row.id != null) meta.deleted[String(row.id)] = true;
-      lastPushedAt = snapshot.updatedAt;
-      localStorage.setItem(META_KEY, JSON.stringify(meta));
+    if (!adminPinOk) return false;
+    if (cloudPushPromise) {
+      await cloudPushPromise;
+      if ((Number(meta.updatedAt) || 0) > lastPushedAt) return pushCloudMeta();
       return true;
+    }
+    if ((Number(meta.updatedAt) || 0) <= lastPushedAt) return true;
+
+    cloudSyncing = true;
+    cloudPushPromise = (async () => {
+      try {
+        // Merge the newest shared copy immediately before writing. This keeps a
+        // phone delete from being overwritten by a computer that was already open.
+        try {
+          const prior = await listMetaEventRows();
+          if (prior[0]) meta = mergeMetaState(meta, prior[0].blob);
+          prior.forEach(({ ev }) => {
+            if (ev && ev.id != null) meta.deleted[String(ev.id)] = true;
+          });
+        } catch { /* still push the local pending change */ }
+
+        const snapshot = {
+          v: 1,
+          updatedAt: meta.updatedAt || Date.now(),
+          emails: meta.emails,
+          templates: meta.templates,
+          archived: meta.archived,
+          deleted: meta.deleted,
+          eventPolicy: meta.eventPolicy,
+          createdAt: meta.createdAt,
+          eventEdits: meta.eventEdits,
+        };
+        if (snapshot.updatedAt <= lastPushedAt) return true;
+        const owner = encodeMetaBlob(snapshot);
+        if (owner.length > 100000) {
+          console.warn('[timeclock] meta blob too large to sync');
+          return false;
+        }
+
+        const created = await api('tc-events', {
+          method: 'POST',
+          body: JSON.stringify({
+            pass: adminPinOk,
+            name: META_EVENT_NAME,
+            start_at: '2099-01-01T00:00:00-07:00',
+            end_at: '2099-01-01T00:01:00-07:00',
+            owner_email: owner,
+          }),
+        });
+        const row = Array.isArray(created) ? created[0] : created;
+        if (row && row.id != null) meta.deleted[String(row.id)] = true;
+        lastPushedAt = snapshot.updatedAt;
+        localStorage.setItem(META_KEY, JSON.stringify(meta));
+        return true;
+      } finally {
+        cloudSyncing = false;
+      }
+    })();
+
+    try {
+      return await cloudPushPromise;
     } finally {
-      cloudSyncing = false;
+      cloudPushPromise = null;
+      // A save/delete may have landed while the previous shared write was in flight.
+      if ((Number(meta.updatedAt) || 0) > lastPushedAt) scheduleCloudMetaPush();
+    }
+  }
+
+  async function flushCloudMeta() {
+    clearTimeout(cloudPushTimer);
+    cloudPushTimer = null;
+    try {
+      return await pushCloudMeta();
+    } catch (err) {
+      scheduleCloudMetaPush();
+      throw err;
     }
   }
 
@@ -1128,6 +1161,15 @@
     meta.deleted[String(id)] = true;
     delete meta.archived[String(id)];
     saveMeta(meta);
+  }
+
+  async function deleteEventEverywhere(id) {
+    deleteEvent(id);
+    try {
+      return await flushCloudMeta();
+    } catch {
+      return false;
+    }
   }
 
   function renderPolicyHtml(packs) {
@@ -1400,8 +1442,12 @@
       right: async () => {
         const yes = await confirmAsk('Delete this event?', `"${ev.name}" will be hidden from Active and Archive. Past punch history stays on worker profiles.`);
         if (!yes) { btn.style.transform = ''; return; }
-        deleteEvent(ev.id);
-        toast('Event removed from the list.');
+        btn.disabled = true;
+        toast('Deleting on every device…', false, 8000);
+        const synced = await deleteEventEverywhere(ev.id);
+        toast(synced
+          ? 'Deleted everywhere — phone and computer are synced.'
+          : 'Deleted here. Shared sync is retrying — keep this screen open.', !synced, synced ? 4200 : 7000);
         $('eventModal').classList.add('hidden');
         loadAdminEvents();
       },
@@ -1476,8 +1522,13 @@
     $('evDeleteBtn').onclick = async () => {
       const yes = await confirmAsk('Delete this event?', `"${ev.name}" will be hidden from the lists.`);
       if (!yes) return;
-      deleteEvent(ev.id);
-      toast('Event removed from the list.');
+      const deleteBtn = $('evDeleteBtn');
+      deleteBtn.disabled = true;
+      toast('Deleting on every device…', false, 8000);
+      const synced = await deleteEventEverywhere(ev.id);
+      toast(synced
+        ? 'Deleted everywhere — phone and computer are synced.'
+        : 'Deleted here. Shared sync is retrying — keep this screen open.', !synced, synced ? 4200 : 7000);
       $('eventModal').classList.add('hidden');
       loadAdminEvents();
     };
@@ -1949,13 +2000,30 @@
     if (b) setDuration(b.dataset.dur);
   });
 
+  let eventSubmitInFlight = false;
+
+  function eventFormSubmitButton() {
+    return $('eventForm').querySelector('button[type="submit"]');
+  }
+
+  function setEventFormBusy(busy) {
+    eventSubmitInFlight = !!busy;
+    const form = $('eventForm');
+    const btn = eventFormSubmitButton();
+    if (btn) btn.disabled = !!busy;
+    form.setAttribute('aria-busy', busy ? 'true' : 'false');
+    $('eventFormSubmitLabel').textContent = busy
+      ? 'SAVING…'
+      : (form.dataset.editingId ? 'SAVE CHANGES' : 'CREATE EVENT');
+  }
+
   function setFormMode(mode, eventId) {
     const editing = mode === 'edit';
     $('eventFormTitle').textContent = editing ? 'EDIT EVENT' : 'NEW EVENT';
-    $('eventFormSubmitLabel').textContent = editing ? 'SAVE CHANGES' : 'CREATE EVENT';
     const form = $('eventForm');
     if (editing && eventId != null) form.dataset.editingId = String(eventId);
     else delete form.dataset.editingId;
+    if (!eventSubmitInFlight) $('eventFormSubmitLabel').textContent = editing ? 'SAVE CHANGES' : 'CREATE EVENT';
   }
 
   function closeEventForm() {
@@ -1965,6 +2033,7 @@
     selectedEmails = [];
     editingEvent = null;
     setFormMode('create');
+    setEventFormBusy(false);
     $('evErr').classList.add('hidden');
     $('evErr').textContent = '';
     // Don't form.reset() — custom time/policy widgets fight native reset and can leave the panel feeling stuck.
@@ -2054,12 +2123,41 @@
   $('adminDate').onchange = loadAdmin;
   $('adminNewEvent').onclick = openEventForm;
   $('eventFormCollapse').onclick = () => {
+    if (eventSubmitInFlight) return;
     closeEventForm();
     toast('New Event closed.');
   };
 
+  function normalizedEventName(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  }
+
+  function normalizedEventEmails(value) {
+    return String(value || '')
+      .split(/[,;]+/)
+      .map(normalizeEmail)
+      .filter(isEmail)
+      .sort()
+      .join(',');
+  }
+
+  function isSameEventDraft(ev, draft) {
+    if (!ev || isMetaEvent(ev) || isDeleted(ev.id)) return false;
+    const live = applyEventEdit(ev);
+    return normalizedEventName(live.name) === normalizedEventName(draft.name)
+      && Date.parse(live.start_at || '') === Date.parse(draft.start_at || '')
+      && Date.parse(live.end_at || '') === Date.parse(draft.end_at || '')
+      && normalizedEventEmails(live.owner_email) === normalizedEventEmails(draft.owner_email);
+  }
+
+  async function findMatchingEvent(draft) {
+    const live = rows(await api('tc-events'));
+    return live.find((ev) => isSameEventDraft(ev, draft)) || null;
+  }
+
   $('eventForm').onsubmit = async (e) => {
     e.preventDefault();
+    if (eventSubmitInFlight) return;
     $('evErr').classList.add('hidden');
     const name = $('evName').value.trim();
     if (!name) {
@@ -2102,6 +2200,18 @@
     const endSnap = timePickers.tpEnd.get();
     const startISO = localISO(start);
     const endISO = localISO(end);
+    const draft = {
+      name,
+      start_at: startISO,
+      end_at: endISO,
+      owner_email: owner,
+    };
+
+    // Lock on the first valid tap and collapse immediately. The old form stayed
+    // visible until n8n answered, which invited the 13-tap duplicate incident.
+    setEventFormBusy(true);
+    $('eventForm').classList.add('hidden');
+    toast('Saving event…', false, 8000);
 
     // Always refresh the Choose Event chip with the latest settings
     rememberTemplate(name, {
@@ -2121,8 +2231,6 @@
       : ($('eventForm').dataset.editingId || null);
     if (editId != null && String(editId) !== '') {
       const id = editId;
-      const saveBtn = $('eventFormSubmitLabel');
-      if (saveBtn) saveBtn.textContent = 'SAVING…';
       setEventPolicies(id, policyKeys);
       saveEventEdit(id, {
         name,
@@ -2144,24 +2252,32 @@
       const policyLabel = policyKeys.length
         ? policyKeys.map((k) => (POLICY_PACKS[k] && POLICY_PACKS[k].title) || k).join(' · ')
         : 'no policies';
-      finishFormToEventList(`Saved. Updated “${name}” — ${policyLabel}. No new event added.`);
+      let synced = true;
+      try { synced = await flushCloudMeta(); } catch { synced = false; }
+      finishFormToEventList(synced
+        ? `Saved everywhere. Updated “${name}” — ${policyLabel}. No new event added.`
+        : `Saved here. Updated “${name}”; shared sync will retry. No new event added.`);
       return;
     }
 
     // ——— CREATE new event (only from + CREATE EVENT, never from Edit) ———
     try {
-      const created = await api('tc-events', {
-        method: 'POST',
-        body: JSON.stringify({
-          pass: adminPinOk,
-          name,
-          start_at: startISO,
-          end_at: endISO,
-          owner_email: owner,
-          policy_keys: policyKeys,
-        }),
-      });
-      const row = Array.isArray(created) ? created[0] : created;
+      // Exact-match lookup makes retries idempotent if a prior request reached
+      // n8n but its response was lost, or if the same saved event is reopened.
+      let row = null;
+      try { row = await findMatchingEvent(draft); } catch { /* create can still work */ }
+      const alreadySaved = !!row;
+      if (!row) {
+        const created = await api('tc-events', {
+          method: 'POST',
+          body: JSON.stringify({
+            pass: adminPinOk,
+            ...draft,
+            policy_keys: policyKeys,
+          }),
+        });
+        row = Array.isArray(created) ? created[0] : created;
+      }
       if (row && row.id != null) {
         setEventPolicies(row.id, policyKeys);
         markCreated(row.id);
@@ -2175,11 +2291,31 @@
         emails: selectedEmails.slice(),
         duration: durationKind,
       });
-      finishFormToEventList(`Event live — ${name} saved under Choose Event.`);
+      try { await flushCloudMeta(); } catch { /* event itself is already live; queued retry keeps metadata moving */ }
+      finishFormToEventList(alreadySaved
+        ? `Already saved — “${name}” still has one event only.`
+        : `Event live — ${name} saved once and synced.`);
     } catch {
-      $('evErr').textContent = 'Saved under Choose Event, but live create failed — check admin code and retry.';
-      $('evErr').classList.remove('hidden');
-      paintTemplates();
+      // A timeout can happen after n8n committed the row. Recover that row
+      // before showing Retry so a second tap cannot manufacture a duplicate.
+      let recovered = null;
+      try { recovered = await findMatchingEvent(draft); } catch { /* show retry below */ }
+      if (recovered) {
+        if (recovered.id != null) {
+          setEventPolicies(recovered.id, policyKeys);
+          markCreated(recovered.id);
+        }
+        try { await flushCloudMeta(); } catch { /* queued retry */ }
+        finishFormToEventList(`Saved — “${name}” was confirmed live once. No duplicate added.`);
+      } else {
+        setEventFormBusy(false);
+        $('eventForm').classList.remove('hidden');
+        $('evErr').textContent = 'Couldn’t confirm the live save. Nothing else was submitted — check the connection and retry once.';
+        $('evErr').classList.remove('hidden');
+        paintTemplates();
+        $('eventForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        toast('Event was not confirmed. The form is open to retry.', true, 6000);
+      }
     }
   };
 

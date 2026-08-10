@@ -10,6 +10,7 @@ Event-staffing clock-in/clock-out app. Live at https://thomasg42.github.io/timec
 - **Policies**: check one or many packs per event (General Handbook, PBR & Rodeo, …). Opening an event shows summaries plus expandable full policy text. Creating “Wildlands” (etc.) saves it as a reusable chip with those policies remembered.
 - **Auto report**: when an event's end time passes, an n8n schedule workflow emails the full time sheet (HTML table + CSV attachment) to the event's report email(s) — multiple recipients stored comma-separated on the event, once.
 - **Note:** archive/delete/email-history/policy bindings/edits sync across phone + desktop via a hidden shared n8n meta event (`__JUSTUS_TC_META__`). Each browser still caches in `localStorage`, but Admin unlock / Events refresh / clock-in pull the shared copy so both devices stay on the same playing field. Live events and punches still come from n8n.
+- **Save/delete safety:** the first valid **Create Event** tap locks and collapses the form immediately. An exact retry (same name, dates/times, and recipients) reuses the existing row instead of POSTing a duplicate. Delete writes shared state immediately and only confirms **Deleted everywhere** after the phone/computer sync write succeeds.
 
 ## Backend (n8n cloud — tggai.app.n8n.cloud)
 - **TimeClock API** (workflow `HgZ6HgjJXs8vCtr6`, active): webhooks `tc-profiles` (GET/POST), `tc-events` (GET/POST, POST needs `pass`), `tc-history?profileId=`, `tc-admin?pass=&date=`, `tc-punch` (POST: `clock_in` | `break_start` | `break_end` | `clock_out`), `tc-perm` (POST `{pass, profile_id, weekly_email}` — needs `pass`), `tc-settings` (GET `?pass=` / POST `{pass, key, value}`). CORS open (`allowedOrigins: *`).
@@ -27,7 +28,7 @@ Event-staffing clock-in/clock-out app. Live at https://thomasg42.github.io/timec
 - `assets/justus-admin-backstage-bg.jpg` — original backstage production-control background
 - `assets/justus-home-gate-v2.jpg` + `justus-home-gate-mobile-v2.jpg` — responsive door-of-greatness entrance with two bouncers, sky/lights, and crowd at the bottom
 - `assets/justus-admin-boss-v2.jpg` — backstage command view behind the artists and DJ/production desk
-- `tests/self-clock-in.test.mjs` — headless-Chrome QA for the clock-in and admin-crew flows against a stubbed n8n backend and a fake camera (48 assertions: typed jobs, policy gating, new-profile path, recent-job chips, events-endpoint outage, crew permission grant/revoke, owner-email save, admin-pass scoping). Run with `node tests/self-clock-in.test.mjs` from this directory.
+- `tests/self-clock-in.test.mjs` — headless-Chrome QA for the clock-in and admin flows against a stubbed n8n backend and a fake camera (57 assertions, including rapid multi-tap save, exact-retry dedupe, and a clean-cache second-device delete check). Run with `node tests/self-clock-in.test.mjs` from this directory.
 
 ## Visual system
 - Home is its own gate-of-greatness scene with the time centered over the cracked-open venue door and only three actions: Select Profile, Create Profile, and Admin.

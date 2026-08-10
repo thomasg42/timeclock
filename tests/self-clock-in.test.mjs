@@ -35,6 +35,7 @@ function makeBackend(events) {
     punches: [],
     settings: [{ id: 1, setting_key: 'owner_emails', setting_value: 'owner@justus.test' }],
     calls: [],
+    eventPostDelayMs: 0,
   };
 }
 
@@ -113,9 +114,16 @@ async function runScenario(label, events, drive) {
       return json(be.events.length ? be.events : [{}]);
     }
     if (route === 'tc-events' && req.method() === 'POST') {
-      const row = { id: 900 + be.events.length, ...body, report_sent: false };
-      be.events.push(row);
-      return json(row);
+      const save = () => {
+        const row = { id: 900 + be.events.length, ...body, report_sent: false };
+        be.events.push(row);
+        json(row);
+      };
+      if (be.eventPostDelayMs && body.name !== '__JUSTUS_TC_META__') {
+        setTimeout(save, be.eventPostDelayMs);
+        return;
+      }
+      return save();
     }
     if (route === 'tc-history') {
       const id = qs.get('profileId');
@@ -465,6 +473,80 @@ await runScenario('H: admin crew permissions', [], async (page, be) => {
     JSON.stringify(setCall.body));
   check('H: worker-facing calls never carried the pass',
     !be.calls.some((c) => ['tc-profiles', 'tc-punch', 'tc-history'].includes(c.route) && c.body && c.body.pass));
+});
+
+/* =========================================================
+   Scenario I — one-shot event save + cross-device delete sync
+   ========================================================= */
+await runScenario('I: one save + delete everywhere', [], async (page, be) => {
+  const unlockAdmin = async () => {
+    await wait(page, '#adminBtn');
+    await page.click('#adminBtn');
+    await wait(page, '#pinPad');
+    for (const d of ['1', '1', '1', '1']) await clickText(page, '#pinPad button', d);
+    await wait(page, '#adminDash');
+  };
+
+  await unlockAdmin();
+  await page.click('#adminNewEvent');
+  await wait(page, '#eventForm');
+  await page.type('#evName', 'Music in the mountains');
+
+  // Hold the fake backend response open: three rapid taps must still yield one POST.
+  be.eventPostDelayMs = 650;
+  await page.$eval('#eventForm button[type="submit"]', (btn) => {
+    btn.click();
+    btn.click();
+    btn.click();
+  });
+  const immediate = await page.$eval('#eventForm', (form) => ({
+    hidden: form.classList.contains('hidden'),
+    busy: form.getAttribute('aria-busy'),
+    disabled: form.querySelector('button[type="submit"]').disabled,
+  }));
+  check('I: first tap immediately collapses and locks the form',
+    immediate.hidden && immediate.busy === 'true' && immediate.disabled,
+    JSON.stringify(immediate));
+
+  await page.waitForFunction(() => document.getElementById('toast').textContent.includes('saved once'), { timeout: 10000 });
+  const realEvents = () => be.events.filter((ev) => ev.name === 'Music in the mountains');
+  const createCalls = () => be.calls.filter((c) => c.route === 'tc-events' && c.method === 'POST' && c.body.name === 'Music in the mountains');
+  check('I: three rapid taps created exactly one backend row', realEvents().length === 1, String(realEvents().length));
+  check('I: three rapid taps sent exactly one create request', createCalls().length === 1, String(createCalls().length));
+
+  // Reopening the same exact draft is an idempotent retry, not a second event.
+  be.eventPostDelayMs = 0;
+  await page.click('#adminNewEvent');
+  await wait(page, '#eventForm');
+  await page.type('#evName', 'Music in the mountains');
+  await page.click('#eventForm button[type="submit"]');
+  await page.waitForFunction(() => document.getElementById('toast').textContent.includes('one event only'), { timeout: 10000 });
+  check('I: exact retry keeps one backend row', realEvents().length === 1, String(realEvents().length));
+  check('I: exact retry does not POST another create', createCalls().length === 1, String(createCalls().length));
+
+  // Delete and wait for the explicit shared-state acknowledgement.
+  await page.waitForFunction(() => [...document.querySelectorAll('#adminEvents .ev-name')]
+    .some((el) => el.textContent.includes('Music in the mountains')), { timeout: 10000 });
+  await page.evaluate(() => [...document.querySelectorAll('#adminEvents .event-item')]
+    .find((el) => el.textContent.includes('Music in the mountains')).click());
+  await wait(page, '#eventModal');
+  await page.click('#evDeleteBtn');
+  await wait(page, '#confirmModal');
+  await page.click('#confirmYes');
+  await page.waitForFunction(() => document.getElementById('toast').textContent.includes('Deleted everywhere'), { timeout: 10000 });
+  check('I: delete produced a shared sentinel write',
+    be.events.some((ev) => ev.name === '__JUSTUS_TC_META__' && String(ev.owner_email || '').startsWith('META_V1.')));
+
+  // A clean localStorage simulates the other device: it must pull the delete
+  // from the shared backend and never display the event.
+  await page.evaluate(() => localStorage.clear());
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await unlockAdmin();
+  await page.waitForFunction(() => !document.getElementById('adminEvents').textContent.includes('Loading'), { timeout: 10000 });
+  const visibleAfterFreshLoad = await page.$eval('#adminEvents', (el) => el.textContent.includes('Music in the mountains'));
+  const deletedInFreshCache = await page.evaluate((id) => !!window.__tc.meta.deleted[String(id)], realEvents()[0].id);
+  check('I: fresh device hides the deleted event', visibleAfterFreshLoad === false);
+  check('I: fresh device received the same deleted id', deletedInFreshCache === true, String(realEvents()[0].id));
 });
 
 server.close();
