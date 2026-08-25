@@ -1727,3 +1727,19 @@ body:has(#view-home:not(.hidden)) .topbar-right {
   color: #ff7a8a;
 }
 .chip-btn.danger:hover { background: rgba(255, 90, 110, .12); }
+
+/* Proof-of-save: what the SERVER holds, shown under the field. A value still
+   sitting in an input looks identical whether it saved or not. */
+.saved-box { margin-top: .5rem; }
+.saved-chips { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .3rem; }
+.saved-chip {
+  display: inline-block;
+  padding: .3rem .55rem;
+  border: 1px solid rgba(47, 125, 255, .45);
+  border-radius: 999px;
+  background: rgba(47, 125, 255, .10);
+  font-family: var(--mono);
+  font-size: .74rem;
+  color: var(--text);
+  word-break: break-all;
+}

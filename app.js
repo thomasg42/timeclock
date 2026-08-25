@@ -1424,31 +1424,71 @@
     loadOwnerEmails();
   }
 
+  /**
+   * Renders what the SERVER actually holds, underneath the box — so a saved
+   * address is visible proof, not just text still sitting in the field. This
+   * is the difference between "I typed it" and "it saved".
+   */
+  function paintSavedOwners(value, when) {
+    const box = $('ownerEmailsSaved');
+    if (!box) return;
+    const list = String(value || '').split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+    if (!list.length) {
+      box.innerHTML = '<p class="field-note form-err">Nobody is set to receive the full crew sheet. Add an address above and hit SAVE.</p>';
+      return;
+    }
+    box.innerHTML = `<p class="field-note muted">Saved on the server${when ? ` — ${when}` : ''}. These get the full crew sheet every Tuesday:</p>`
+      + `<div class="saved-chips">${list.map((a) => `<span class="saved-chip">${esc(a)}</span>`).join('')}</div>`;
+  }
+
   async function loadOwnerEmails() {
     const input = $('ownerEmails');
-    if (!input || input.dataset.loaded === '1' || document.activeElement === input) return;
+    // No one-shot guard: this used to load once per page and never refresh, so
+    // the field could show a stale value all session. Only skip while the
+    // admin is actually typing in it.
+    if (!input || document.activeElement === input) return;
     try {
       const found = rows(await api(`tc-settings?pass=${encodeURIComponent(adminPinOk)}`))
         .find((s) => s.setting_key === 'owner_emails');
-      input.value = (found && found.setting_value) || '';
-      input.dataset.loaded = '1';
+      const value = (found && found.setting_value) || '';
+      input.value = value;
+      paintSavedOwners(value, found && found.updated_at ? fmtDate(String(found.updated_at).slice(0, 10)) : '');
     } catch { /* leave whatever is typed */ }
   }
 
   $('ownerEmailsSave').onclick = async () => {
     const btn = $('ownerEmailsSave');
     const value = $('ownerEmails').value.trim();
-    if (value && !/.+@.+\..+/.test(value)) { toast('That doesn\'t look like an email address.', true); return; }
+    // Validate EVERY address, not the whole string at once. The old check let
+    // "you@x.com, josh" through, because one greedy match across the commas
+    // satisfied it.
+    const list = value.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+    const bad = list.filter((a) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a));
+    if (bad.length) {
+      toast(`Not a valid email address: ${bad.join(', ')}`, true);
+      return;
+    }
     btn.disabled = true;
     btn.textContent = 'SAVING…';
     try {
       await api('tc-settings', {
         method: 'POST',
-        body: JSON.stringify({ pass: adminPinOk, key: 'owner_emails', value }),
+        body: JSON.stringify({ pass: adminPinOk, key: 'owner_emails', value: list.join(', ') }),
       });
-      toast('Owner email saved.');
+      // Read it back from the server rather than trusting the POST. Until the
+      // server says so, nothing is saved — this is what makes a save provable
+      // instead of "the text is still in the box".
+      const found = rows(await api(`tc-settings?pass=${encodeURIComponent(adminPinOk)}`))
+        .find((s) => s.setting_key === 'owner_emails');
+      const confirmed = (found && found.setting_value) || '';
+      $('ownerEmails').value = confirmed;
+      paintSavedOwners(confirmed, 'just now');
+      toast(confirmed === list.join(', ')
+        ? `Saved — ${list.length} admin address${list.length === 1 ? '' : 'es'} on file.`
+        : 'Saved, but the server came back different — check the list below.', confirmed !== list.join(', '));
     } catch {
-      toast('Couldn\'t save the owner email — try again.', true);
+      paintSavedOwners('', '');
+      toast('NOT saved — the server didn\'t take it. Try again.', true);
     }
     btn.disabled = false;
     btn.textContent = 'SAVE';
