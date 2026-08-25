@@ -105,10 +105,18 @@ body:has(#view-profile:not(.hidden))::after {
   color: #0b6fae;
 }
 
-#wizard .cam-wrap,
-#wizard .cam-frame {
+#wizard .cam-wrap {
   border-color: rgba(18, 108, 153, .38);
   background: #eaf7ff;
+}
+
+/* .cam-frame is the dashed guide that sits ON TOP of the live video
+   (position:absolute; inset:10px). Giving it a background painted an opaque
+   near-white panel over the camera — that was the "white box over the camera"
+   where the selfie should be. It must stay transparent. */
+#wizard .cam-frame {
+  border-color: rgba(18, 108, 153, .38);
+  background: none;
 }
 
 /* "what's this job for?" typed-job field, on the light clarity card */

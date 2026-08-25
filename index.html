@@ -132,9 +132,13 @@
           <input type="text" id="ownerEmails" placeholder="owner@business.com, you@business.com" autocomplete="email">
           <button type="button" class="chip-btn primary" id="ownerEmailsSave">SAVE</button>
         </div>
-        <p class="field-note muted">The owner always gets one combined sheet of everyone's shifts. Separate multiple addresses with commas.</p>
+        <p class="field-note muted">Separate multiple addresses with commas.</p>
+        <div class="wiz-job-row" style="margin-top:.6rem">
+          <button type="button" class="chip-btn primary" id="sendSheetNow">EMAIL THIS WEEK'S SHEET NOW</button>
+        </div>
+        <p class="field-note muted" id="sendSheetNote">Sends the full crew sheet — every person's shifts, hours and clock-in photo — to the owner and to everyone who signed up with an email address.</p>
       </div>
-      <p class="event-hint muted center">Pay week runs Wednesday → Tuesday. Turn someone ON and their own time sheet — job, clock in, clock out, hours per shift — is emailed to them Tuesday night too.</p>
+      <p class="event-hint muted center">Pay week runs Wednesday → Tuesday. The full crew sheet goes out automatically every Tuesday at 11:30 PM Mountain, to the owner and to every employee who entered an email address.</p>
       <div id="adminCrew" class="crew-list"></div>
 
       <h3 class="section-label">EVENTS</h3>

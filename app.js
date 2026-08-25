@@ -460,6 +460,7 @@
           <div class="cam-frame"></div>
         </div>
         <div class="wiz-actions" id="camActions">
+          <button class="big-btn outline" id="camFlip" type="button"><span class="big-btn-title">🔄 FLIP CAMERA</span></button>
           <button class="big-btn primary" id="camSnap" type="button"><span class="big-btn-title">📸 SNAP</span></button>
         </div>
         <div class="wiz-fallback">
@@ -467,15 +468,60 @@
         </div>`;
 
       const video = $('camVideo');
-      try {
-        wiz.stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: shot.facing, width: { ideal: 1280 } }, audio: false,
-        });
+      const camErr = (msg) => {
+        const stage = body.querySelector('.cam-stage');
+        if (!stage || body.querySelector('.cam-error')) return;
+        stage.insertAdjacentHTML('beforebegin', `<p class="form-err cam-error">${esc(msg)}</p>`);
+      };
+
+      // Which way the camera is pointing. Starts on the selfie camera and the
+      // worker can flip to the back camera to show where they are.
+      if (!wiz.facing) wiz.facing = shot.facing;
+
+      async function startCam(facing) {
+        stopStream();
+        try {
+          wiz.stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: facing }, width: { ideal: 1280 } }, audio: false,
+          });
+        } catch {
+          camErr('Camera blocked — allow camera access, or use the phone-camera link below.');
+          return false;
+        }
         video.srcObject = wiz.stream;
-      } catch {
-        body.querySelector('.cam-stage').insertAdjacentHTML('beforebegin',
-          '<p class="form-err">Camera blocked — allow camera access, or use the phone-camera link below.</p>');
+        // The selfie view is mirrored the way a mirror is, which is what people
+        // expect; the captured frame is drawn from the unmirrored video, so the
+        // saved photo is never backwards.
+        video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
+        // iOS Safari does not reliably autoplay a stream attached after the
+        // element was inserted, and a video that never plays reports
+        // videoWidth 0 — which is what made SNAP capture a blank frame.
+        if (video.readyState < 1) {
+          await new Promise((resolve) => {
+            const done = () => resolve();
+            video.addEventListener('loadedmetadata', done, { once: true });
+            setTimeout(done, 4000);
+          });
+        }
+        try { await video.play(); } catch { /* already playing, or blocked; videoWidth still tells us */ }
+        return true;
       }
+
+      await startCam(wiz.facing);
+
+      $('camFlip').onclick = async () => {
+        const btn = $('camFlip');
+        btn.disabled = true;
+        wiz.facing = wiz.facing === 'user' ? 'environment' : 'user';
+        const ok = await startCam(wiz.facing);
+        // A phone with only one camera keeps working — flip back rather than
+        // leaving the worker staring at a dead stage.
+        if (!ok) {
+          wiz.facing = wiz.facing === 'user' ? 'environment' : 'user';
+          await startCam(wiz.facing);
+        }
+        btn.disabled = false;
+      };
 
       const accept = (dataUrl) => {
         wiz.photos[shot.key] = dataUrl;
@@ -507,7 +553,12 @@
       };
 
       $('camSnap').onclick = () => {
-        if (!video.videoWidth) { toast('Camera not ready yet.', true); return; }
+        // videoWidth is 0 until the stream is actually playing. Capturing then
+        // produces a blank frame that looks like a white box, so refuse it.
+        if (!video.videoWidth || !video.videoHeight) {
+          toast('Camera not ready yet — give it a second, or use the phone-camera link.', true);
+          return;
+        }
         accept(frameToJpeg(video, video.videoWidth, video.videoHeight));
       };
       $('camFile').onchange = (e) => {
@@ -1255,7 +1306,17 @@
           ? '<tr><td colspan="9" class="muted center">No punches for this day.</td></tr>'
           : punches.map((p) => {
             const h = shiftHours(p);
-            const photo = (url, label) => (url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${label}</a>` : '·');
+            // Clock-in photos used to be Google Drive links, private to the
+            // Drive owner. Photos taken since the move live on the backend and
+            // are just as private — they need the admin pass. Older Drive links
+            // are left exactly as they were stored.
+            const photo = (url, label) => {
+              if (!url) return '·';
+              const href = String(url).startsWith(API)
+                ? `${url}?pass=${encodeURIComponent(adminPinOk)}`
+                : url;
+              return `<a href="${esc(href)}" target="_blank" rel="noopener">${label}</a>`;
+            };
             return `<tr>
               <td>${esc(p.profile_name)}</td>
               <td>${esc(p.event_name || '')}</td>
@@ -1372,6 +1433,42 @@
     }
     btn.disabled = false;
     btn.textContent = 'SAVE';
+  };
+
+  $('sendSheetNow').onclick = async () => {
+    const btn = $('sendSheetNow');
+    const note = $('sendSheetNote');
+    btn.disabled = true;
+    btn.textContent = 'SENDING…';
+    try {
+      const r = await api('tc-timesheet', {
+        method: 'POST',
+        body: JSON.stringify({ pass: adminPinOk }),
+      });
+      if (r.sent) {
+        // photos_attached only comes back from the worker backend; n8n links
+        // the photos instead of attaching them, so don't claim a count it
+        // didn't report.
+        const photos = typeof r.photos_attached === 'number'
+          ? `, ${r.photos_attached} photo${r.photos_attached === 1 ? '' : 's'}`
+          : '';
+        const to = Array.isArray(r.to) ? r.to.length : 0;
+        note.textContent = `Sent — ${r.shifts} shift${r.shifts === 1 ? '' : 's'}, ${r.total_hours} hours${photos}, `
+          + `to ${to} address${to === 1 ? '' : 'es'}.`;
+        toast('Time sheet emailed.');
+      } else {
+        // Never claim it went out when it did not — say exactly what stopped it.
+        note.textContent = r.error === 'mail_not_configured'
+          ? 'Email is not set up on the backend yet (RESEND_API_KEY / MAIL_FROM). Nothing was sent.'
+          : `Not sent — ${r.error || 'unknown error'}.`;
+        toast('Time sheet was NOT sent.', true);
+      }
+    } catch {
+      note.textContent = 'Couldn\'t reach the backend. Nothing was sent.';
+      toast('Time sheet was NOT sent.', true);
+    }
+    btn.disabled = false;
+    btn.textContent = 'EMAIL THIS WEEK\'S SHEET NOW';
   };
 
   $('eventTabs').addEventListener('click', (e) => {
