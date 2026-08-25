@@ -1569,30 +1569,53 @@
       · ${esc(ev.owner_email || '')}</span></span>${badge}`;
     btn.onclick = () => openEventDetail(ev);
     wrap.appendChild(btn);
-    attachSwipe(wrap, btn, {
-      left: async () => {
-        if (isArchived(ev.id)) {
-          restoreEvent(ev.id);
-          toast('Restored to active.');
-        } else {
-          archiveEvent(ev.id);
-          toast('Archived.');
-        }
-        loadAdminEvents();
-      },
-      right: async () => {
-        const yes = await confirmAsk('Delete this event?', `"${ev.name}" will be hidden from Active and Archive. Past punch history stays on worker profiles.`);
-        if (!yes) { btn.style.transform = ''; return; }
-        btn.disabled = true;
-        toast('Deleting on every device…', false, 8000);
-        const synced = await deleteEventEverywhere(ev.id);
-        toast(synced
-          ? 'Deleted everywhere — phone and computer are synced.'
-          : 'Deleted here. Shared sync is retrying — keep this screen open.', !synced, synced ? 4200 : 7000);
-        $('eventModal').classList.add('hidden');
-        loadAdminEvents();
-      },
-    });
+
+    // The same two actions the swipe performs, as named functions, so the
+    // visible buttons below and the swipe gesture can never drift apart.
+    const doArchive = async () => {
+      if (isArchived(ev.id)) {
+        restoreEvent(ev.id);
+        toast('Restored to active.');
+      } else {
+        archiveEvent(ev.id);
+        toast('Archived.');
+      }
+      loadAdminEvents();
+    };
+    const doDelete = async () => {
+      const yes = await confirmAsk('Delete this event?', `"${ev.name}" will be hidden from Active and Archive. Past punch history stays on worker profiles.`);
+      if (!yes) { btn.style.transform = ''; return; }
+      btn.disabled = true;
+      toast('Deleting on every device…', false, 8000);
+      const synced = await deleteEventEverywhere(ev.id);
+      toast(synced
+        ? 'Deleted everywhere — phone and computer are synced.'
+        : 'Deleted here. Shared sync is retrying — keep this screen open.', !synced, synced ? 4200 : 7000);
+      $('eventModal').classList.add('hidden');
+      loadAdminEvents();
+    };
+
+    attachSwipe(wrap, btn, { left: doArchive, right: doDelete });
+
+    // Swipe is invisible — nobody discovers it. These are the same actions as
+    // plain buttons, so every event can be edited, archived and deleted
+    // without knowing a gesture exists.
+    const actions = document.createElement('div');
+    actions.className = 'event-actions';
+    const mk = (label, cls, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `chip-btn ${cls}`;
+      b.textContent = label;
+      b.onclick = (e) => { e.stopPropagation(); fn(); };
+      return b;
+    };
+    actions.append(
+      mk('EDIT', 'primary', () => openEventDetail(ev)),
+      mk(isArchived(ev.id) ? 'RESTORE' : 'ARCHIVE', '', doArchive),
+      mk('DELETE', 'danger', doDelete),
+    );
+    wrap.appendChild(actions);
     return wrap;
   }
 

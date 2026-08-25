@@ -1711,3 +1711,19 @@ body:has(#view-home:not(.hidden)) .topbar-right {
 }
 .row-del:hover { background: rgba(255, 90, 110, .12); }
 .row-del:disabled { opacity: .4; cursor: default; }
+
+/* Visible EDIT / ARCHIVE / DELETE on every event row. The swipe gesture still
+   works, but nobody discovers a swipe — these are the same two actions plus
+   edit, spelled out. */
+.event-actions {
+  display: flex;
+  gap: .4rem;
+  padding: .45rem .1rem .2rem;
+  flex-wrap: wrap;
+}
+.event-actions .chip-btn { flex: 1 1 auto; min-height: 40px; }
+.chip-btn.danger {
+  border-color: rgba(255, 90, 110, .5);
+  color: #ff7a8a;
+}
+.chip-btn.danger:hover { background: rgba(255, 90, 110, .12); }
