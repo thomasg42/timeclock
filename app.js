@@ -1424,6 +1424,20 @@
     loadOwnerEmails();
   }
 
+  // The admin addresses held on the server (Thomas + Josh). Every event report
+  // goes to these whoever created the event, so nobody has to remember to add
+  // them and no event can be created that the owners don't hear about.
+  let adminReportEmails = [];
+  const dedupeEmails = (list) => {
+    const seen = new Set();
+    return list.filter((a) => {
+      const k = String(a || '').trim().toLowerCase();
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  };
+
   /**
    * Renders what the SERVER actually holds, underneath the box — so a saved
    * address is visible proof, not just text still sitting in the field. This
@@ -1452,6 +1466,7 @@
         .find((s) => s.setting_key === 'owner_emails');
       const value = (found && found.setting_value) || '';
       input.value = value;
+      adminReportEmails = dedupeEmails(value.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean));
       paintSavedOwners(value, found && found.updated_at ? fmtDate(String(found.updated_at).slice(0, 10)) : '');
     } catch { /* leave whatever is typed */ }
   }
@@ -1482,6 +1497,7 @@
         .find((s) => s.setting_key === 'owner_emails');
       const confirmed = (found && found.setting_value) || '';
       $('ownerEmails').value = confirmed;
+      adminReportEmails = dedupeEmails(confirmed.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean));
       paintSavedOwners(confirmed, 'just now');
       toast(confirmed === list.join(', ')
         ? `Saved — ${list.length} admin address${list.length === 1 ? '' : 'es'} on file.`
@@ -2265,7 +2281,7 @@
     initTimePickers();
     timePickers.tpStart.set(10, 0);
     timePickers.tpEnd.set(22, 0);
-    selectedEmails = meta.emails[0] ? [meta.emails[0]] : [];
+    selectedEmails = dedupeEmails([...adminReportEmails, ...(meta.emails[0] ? [meta.emails[0]] : [])]);
     paintTemplates();
     paintPolicyChecks([]);
     paintEmailUI();
@@ -2398,7 +2414,9 @@
       $('evErr').classList.remove('hidden');
       return;
     }
-    const owner = selectedEmails.join(', ');
+    // Force the admin addresses back in. Whoever creates the event, the owners
+    // always get its report — they cannot be un-ticked away.
+    const owner = dedupeEmails([...adminReportEmails, ...selectedEmails]).join(', ');
     const policyKeys = selectedPolicyKeys();
     const startSnap = timePickers.tpStart.get();
     const endSnap = timePickers.tpEnd.get();
