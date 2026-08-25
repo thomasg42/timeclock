@@ -23,6 +23,28 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+/* iOS Safari has ignored `user-scalable=no` since iOS 10, so the viewport tag
+   alone does NOT stop double-tap-to-zoom. Tapping 1-1-1-1 quickly on the admin
+   keypad reads as a double tap and Safari zooms the page. `touch-action:
+   manipulation` turns off the double-tap gesture on controls specifically —
+   pinch-to-zoom still works everywhere, so nothing is taken away from anyone
+   who needs to zoom. */
+button,
+[role="button"],
+label,
+input,
+select,
+textarea,
+.big-btn,
+.chip-btn,
+.profile-item {
+  touch-action: manipulation;
+}
+
+/* A focused input under 16px makes iOS zoom the page in and never zoom back
+   out. Every text field the crew touches stays at 16px or above. */
+input, select, textarea { font-size: max(1rem, 16px); }
+
 html { font-size: 16px; }
 
 body {
@@ -1674,3 +1696,18 @@ body:has(#view-home:not(.hidden)) .topbar-right {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Admin day sheet — delete one punch (an accidental clock-in, a test row). */
+.row-del {
+  background: none;
+  border: 1px solid rgba(255, 90, 110, .45);
+  color: #ff7a8a;
+  border-radius: 6px;
+  min-width: 34px;
+  min-height: 34px;
+  font-size: .95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.row-del:hover { background: rgba(255, 90, 110, .12); }
+.row-del:disabled { opacity: .4; cursor: default; }

@@ -156,16 +156,33 @@
   $('createForm').onsubmit = async (e) => {
     e.preventDefault();
     const btn = $('cpSubmit');
+    // First name, last name and email are what the Tuesday time sheet needs to
+    // reach this person. The fields are `required`, but that lets a space
+    // through and can pin the browser's popup to a field scrolled out of the
+    // card — so check here and say plainly what is missing.
+    const first = $('cpFirst').value.trim();
+    const last = $('cpLast').value.trim();
+    const email = $('cpEmail').value.trim();
+    const missing = [];
+    if (!first) missing.push('first name');
+    if (!last) missing.push('last name');
+    if (!email) missing.push('email address');
+    if (!missing.length && !/.+@.+\..+/.test(email)) missing.push('a valid email address');
+    if (missing.length) {
+      $('cpErr').textContent = `Add your ${missing.join(' and ')} — your time sheet is emailed to you every Tuesday.`;
+      $('cpErr').classList.remove('hidden');
+      return;
+    }
     btn.disabled = true;
     $('cpErr').classList.add('hidden');
     try {
       const profile = await api('tc-profiles', {
         method: 'POST',
         body: JSON.stringify({
-          first_name: $('cpFirst').value.trim(),
-          last_name: $('cpLast').value.trim(),
+          first_name: first,
+          last_name: last,
           dob: $('cpDob').value,
-          email: $('cpEmail').value.trim(),
+          email,
           phone: $('cpPhone').value.trim(),
         }),
       });
@@ -1296,14 +1313,14 @@
     if (!$('adminDate').value) $('adminDate').value = localDate();
     const date = $('adminDate').value;
     const tbody = $('adminRows');
-    if (!silent) tbody.innerHTML = `<tr><td colspan="9" class="muted center">${spinnerHtml()}Loading…</td></tr>`;
+    if (!silent) tbody.innerHTML = `<tr><td colspan="10" class="muted center">${spinnerHtml()}Loading…</td></tr>`;
     try {
       const punches = rows(await api(`tc-admin?pass=${encodeURIComponent(adminPinOk)}&date=${encodeURIComponent(date)}`))
         .sort((a, b) => String(a.clock_in).localeCompare(String(b.clock_in)));
       const sig = punches.map((p) => [p.id, p.status, p.clock_out, p.break_end].join('~')).join('|');
       if (!silent || sig !== lastPunchesSig) {
         tbody.innerHTML = !punches.length
-          ? '<tr><td colspan="9" class="muted center">No punches for this day.</td></tr>'
+          ? '<tr><td colspan="10" class="muted center">No punches for this day.</td></tr>'
           : punches.map((p) => {
             const h = shiftHours(p);
             // Clock-in photos used to be Google Drive links, private to the
@@ -1327,12 +1344,14 @@
               <td>${p.status === 'out' ? fmtTime(p.clock_out) : '<b style="color:var(--in-green)">on clock</b>'}</td>
               <td>${h != null ? h.toFixed(2) : '—'}</td>
               <td>${photo(p.photo_selfie, 'SELFIE')}</td>
+              <td><button type="button" class="row-del" data-del="${esc(String(p.id))}"
+                    data-who="${esc(p.profile_name || 'this shift')}" title="Delete this punch">✕</button></td>
             </tr>`;
           }).join('');
       }
       lastPunchesSig = sig;
     } catch {
-      if (!silent) tbody.innerHTML = '<tr><td colspan="9" class="form-err center">Couldn\'t load the sheet.</td></tr>';
+      if (!silent) tbody.innerHTML = '<tr><td colspan="10" class="form-err center">Couldn\'t load the sheet.</td></tr>';
     }
     loadCrew(opts);
     loadAdminEvents(opts);
@@ -1458,10 +1477,12 @@
         toast('Time sheet emailed.');
       } else {
         // Never claim it went out when it did not — say exactly what stopped it.
+        // `blocked` is the deliberate one-send-per-day guard, not a failure,
+        // so it shouldn't read like something broke.
         note.textContent = r.error === 'mail_not_configured'
           ? 'Email is not set up on the backend yet (RESEND_API_KEY / MAIL_FROM). Nothing was sent.'
-          : `Not sent — ${r.error || 'unknown error'}.`;
-        toast('Time sheet was NOT sent.', true);
+          : `${r.blocked ? '' : 'Not sent — '}${r.error || 'unknown error'}`;
+        toast(r.blocked ? 'Already sent today — one per day.' : 'Time sheet was NOT sent.', !r.blocked);
       }
     } catch {
       note.textContent = 'Couldn\'t reach the backend. Nothing was sent.';
@@ -1470,6 +1491,29 @@
     btn.disabled = false;
     btn.textContent = 'EMAIL THIS WEEK\'S SHEET NOW';
   };
+
+  // Bound ONCE, on the tbody — loadAdmin replaces its innerHTML every 20
+  // seconds, so binding per render would stack listeners and delete twice on
+  // one tap.
+  $('adminRows').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-del]');
+    if (!btn || btn.disabled) return;
+    const who = btn.dataset.who || 'this shift';
+    if (!window.confirm(`Delete ${who}'s punch?\n\nThe shift is removed for good and stops counting toward the time sheet.`)) return;
+    btn.disabled = true;
+    try {
+      await api('tc-punch-delete', {
+        method: 'POST',
+        body: JSON.stringify({ pass: adminPinOk, punch_id: Number(btn.dataset.del) }),
+      });
+      lastPunchesSig = ''; // force a repaint even though the poll is silent
+      toast('Punch deleted.');
+      loadAdmin();
+    } catch {
+      btn.disabled = false;
+      toast('Couldn\'t delete that punch — try again.', true);
+    }
+  });
 
   $('eventTabs').addEventListener('click', (e) => {
     const tab = e.target.closest('[data-tab]');
