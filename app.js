@@ -1772,9 +1772,55 @@
     }
   }
 
+  // Event ids marked for deletion but not yet committed to the server.
+  const pendingEventDeletes = new Set();
+
+  function paintPendingEvents() {
+    const note = $('eventsPending');
+    const btn = $('eventsSave');
+    if (!note || !btn) return;
+    const n = pendingEventDeletes.size;
+    note.classList.toggle('hidden', n === 0);
+    note.textContent = n ? `${n} event${n === 1 ? '' : 's'} marked to delete. Hit SAVE to remove ${n === 1 ? 'it' : 'them'} from the server for good.` : '';
+    btn.classList.toggle('primary', n > 0);
+    btn.textContent = n ? `SAVE (${n})` : 'SAVE';
+  }
+
+  $('eventsSave').onclick = async () => {
+    const btn = $('eventsSave');
+    if (!pendingEventDeletes.size) { toast('Nothing to save — no events are marked.'); return; }
+    const ids = [...pendingEventDeletes];
+    btn.disabled = true;
+    btn.textContent = 'SAVING…';
+    let done = 0;
+    const stuck = [];
+    for (const id of ids) {
+      try {
+        await api('tc-event-delete', {
+          method: 'POST',
+          body: JSON.stringify({ pass: adminPinOk, event_id: Number(id) }),
+        });
+        pendingEventDeletes.delete(id);
+        done += 1;
+      } catch {
+        stuck.push(id);
+      }
+    }
+    btn.disabled = false;
+    paintPendingEvents();
+    lastEventsSig = '';
+    loadAdminEvents();
+    toast(stuck.length
+      ? `Deleted ${done}. ${stuck.length} wouldn't go — still marked, try SAVE again.`
+      : `Deleted ${done} event${done === 1 ? '' : 's'} from the server.`, stuck.length > 0);
+  };
+
   function buildEventRow(ev) {
     const ended = ev.end_at && new Date(ev.end_at) <= new Date();
-    const badge = isArchived(ev.id)
+    const staged = pendingEventDeletes.has(String(ev.id));
+    const badge = staged
+      ? '<span class="badge willdel">WILL DELETE</span>'
+      : isArchived(ev.id)
       ? '<span class="badge arch">ARCHIVED</span>'
       : ev.report_sent
         ? '<span class="badge sent">SHEET SENT</span>'
@@ -1784,7 +1830,7 @@
     wrap.innerHTML = `<div class="event-swipe-bg"><span class="arch">ARCHIVE</span><span class="del">DELETE</span></div>`;
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'event-item';
+    btn.className = `event-item${staged ? ' pending-del' : ''}`;
     btn.innerHTML = `<span><span class="ev-name">${esc(ev.name)}</span><br>
       <span class="ev-times">${new Date(ev.start_at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
       → ${new Date(ev.end_at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
@@ -1804,16 +1850,17 @@
       }
       loadAdminEvents();
     };
+    // Deleting is STAGED, not immediate: no popup, no server call. The row is
+    // marked, and SAVE at the top of the EVENTS box is what actually removes it
+    // from the server. Hitting DELETE again un-stages it.
     const doDelete = async () => {
-      const yes = await confirmAsk('Delete this event?', `"${ev.name}" will be hidden from Active and Archive. Past punch history stays on worker profiles.`);
-      if (!yes) { btn.style.transform = ''; return; }
-      btn.disabled = true;
-      toast('Deleting on every device…', false, 8000);
-      const synced = await deleteEventEverywhere(ev.id);
-      toast(synced
-        ? 'Deleted everywhere — phone and computer are synced.'
-        : 'Deleted here. Shared sync is retrying — keep this screen open.', !synced, synced ? 4200 : 7000);
+      btn.style.transform = '';
+      const key = String(ev.id);
+      if (pendingEventDeletes.has(key)) pendingEventDeletes.delete(key);
+      else pendingEventDeletes.add(key);
       $('eventModal').classList.add('hidden');
+      lastEventsSig = '';
+      paintPendingEvents();
       loadAdminEvents();
     };
 
@@ -1835,7 +1882,7 @@
     actions.append(
       mk('EDIT', 'primary', () => openEventDetail(ev)),
       mk(isArchived(ev.id) ? 'RESTORE' : 'ARCHIVE', '', doArchive),
-      mk('DELETE', 'danger', doDelete),
+      mk(staged ? 'UNDO DELETE' : 'DELETE', 'danger', doDelete),
     );
     wrap.appendChild(actions);
     return wrap;

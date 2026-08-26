@@ -142,12 +142,16 @@
       <p class="event-hint muted center">Pay week runs Wednesday → Tuesday. The full crew sheet goes out automatically every Tuesday at 11:30 PM Mountain, to the owner and to every employee who entered an email address.</p>
       <div id="adminCrew" class="crew-list"></div>
 
-      <h3 class="section-label">EVENTS</h3>
+      <div class="section-head">
+        <h3 class="section-label">EVENTS</h3>
+        <button type="button" class="chip-btn primary" id="eventsSave">SAVE</button>
+      </div>
       <div class="event-tabs" id="eventTabs" role="tablist">
         <button type="button" class="event-tab on" data-tab="active">ACTIVE</button>
         <button type="button" class="event-tab" data-tab="archived">ARCHIVE</button>
       </div>
-      <p class="event-hint muted center">Tap an event for details + policies. Swipe left to archive · swipe right to delete.</p>
+      <p class="event-hint muted center">Every event you have ever made is listed here. Tap one for details + policies. DELETE marks it to go — nothing leaves the server until you hit SAVE.</p>
+      <p class="field-note hidden" id="eventsPending"></p>
       <div id="adminEvents" class="event-list"></div>
 
       <form id="eventForm" class="card form-card hidden">

@@ -1781,3 +1781,10 @@ body:has(#view-home:not(.hidden)) .topbar-right {
 /* Crew rows swipe like event rows: left archives, right deletes. */
 .crew-swipe { position: relative; overflow: hidden; margin-bottom: .5rem; }
 .crew-swipe .crew-item { position: relative; z-index: 2; background: var(--panel); }
+
+/* EVENTS header with its own SAVE, and rows staged for deletion. */
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+.section-head .section-label { margin: 0; }
+.event-item.pending-del { opacity: .5; }
+.event-item.pending-del .ev-name { text-decoration: line-through; }
+.badge.willdel { background: rgba(255, 90, 110, .18); color: #ff7a8a; border-color: rgba(255, 90, 110, .5); }
