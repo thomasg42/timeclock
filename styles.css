@@ -1828,6 +1828,19 @@ body:has(#view-home:not(.hidden)) .topbar-right {
 .crew-swipe .crew-item { position: relative; z-index: 2; background: var(--panel); }
 
 /* EVENTS header with its own SAVE, and rows staged for deletion. */
+/* Collapsed NEW EVENT: keep the header, hide the fields. Hiding the whole form
+   left nothing on screen to tap to get it back. */
+.form-card.collapsed > *:not(.form-card-head) { display: none; }
+.form-card.collapsed { padding-bottom: .55rem; }
+.form-card.collapsed .form-card-head { margin-bottom: 0; cursor: pointer; }
+
+/* Second SAVE under the event list — the header one scrolls away on a phone. */
+.events-save-bottom {
+  display: flex; align-items: center; gap: .7rem; flex-wrap: wrap;
+  margin: .7rem 0 1rem;
+}
+.events-save-bottom .field-note { margin: 0; flex: 1 1 12rem; }
+
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
 .section-head .section-label { margin: 0; }
 .event-item.pending-del { opacity: .5; }

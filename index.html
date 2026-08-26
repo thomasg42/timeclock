@@ -12,8 +12,8 @@
 <!-- BUMP ?v= ON EVERY DEPLOY. This token sat at 20260809 for weeks, so phones
      kept serving a stale app.js and never saw a single deploy after Aug 9 —
      fixes looked live on the server and were invisible on the actual phone. -->
-<link rel="stylesheet" href="styles.css?v=20260826-hash-routing">
-<link rel="stylesheet" href="clock-flow.css?v=20260826-hash-routing">
+<link rel="stylesheet" href="styles.css?v=20260826-choose-event">
+<link rel="stylesheet" href="clock-flow.css?v=20260826-choose-event">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>">
 </head>
 <body>
@@ -160,6 +160,12 @@
       <p class="event-hint muted center">Every event you have ever made is listed here. Tap one for details + policies. DELETE marks it to go — nothing leaves the server until you hit SAVE.</p>
       <p class="field-note hidden" id="eventsPending"></p>
       <div id="adminEvents" class="event-list"></div>
+      <!-- Second SAVE under the list: on a phone the one in the section header
+           scrolls out of reach long before you have finished marking rows. -->
+      <div class="events-save-bottom">
+        <button type="button" class="chip-btn" id="eventsSaveBottom">SAVE</button>
+        <p class="field-note muted">Marked events only leave the server when you hit SAVE.</p>
+      </div>
 
       <!-- Week-by-week record, for reading hours without going to email -->
       <div class="section-head">
@@ -297,6 +303,6 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="config.js"></script>
-<script src="app.js?v=20260826-hash-routing"></script>
+<script src="app.js?v=20260826-choose-event"></script>
 </body>
 </html>

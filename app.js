@@ -958,18 +958,69 @@
     });
     return out;
   }
+  /* ---------- Choose Event tombstones ----------
+
+     Deleting a saved event USED TO ONLY REMOVE IT LOCALLY. mergeTemplates is a
+     union of the local list and the blob on the server, so the very next cloud
+     sync merged the deleted chip straight back — you could tap delete all night
+     and they kept coming back. Events already had a `deleted` tombstone map;
+     Choose Event had none. This is that missing map.
+
+     Keyed by LOWERCASED NAME, not id, because mergeTemplates keys by name and
+     the same event carries different ids on different devices (tpl-sync-6 here,
+     tpl-1785531594210 there). An id-keyed tombstone would miss its twin. */
+  const tplKey = (name) => String(name || '').trim().toLowerCase();
+  const isTemplateDeleted = (map, name) => !!(map && map[tplKey(name)]);
+  const dropDeletedTemplates = (list, map) =>
+    (list || []).filter((t) => t && !isTemplateDeleted(map, t.name));
+
+  // The four Thomas asked to keep (2026-08-26). Everything else in Choose Event
+  // at that point was test junk — PBR1, Real Test Event, Webhook Test Event.
+  const CLEANUP_V1_KEEP = ['pbr / rodeo — big sky', 'wildlands', 'music in the mountains', 'rbar'];
+
   function loadMeta() {
     try {
       const raw = JSON.parse(localStorage.getItem(META_KEY) || '{}');
+      const deletedTemplates = raw.deletedTemplates && typeof raw.deletedTemplates === 'object'
+        ? { ...raw.deletedTemplates } : {};
       let templates = (Array.isArray(raw.templates) ? raw.templates : [])
         .map(normalizeTemplate)
         .filter(Boolean);
-      if (!templates.length) templates = DEFAULT_TEMPLATES.map((t) => ({ ...t, policyKeys: t.policyKeys.slice() }));
+      // One-time cleanup of the accumulated test entries. Runs once per device,
+      // then never again — so anything created afterwards is left alone.
+      let cleanupV1 = raw.tplCleanupV1 === true;
+      const ranCleanup = !cleanupV1;
+      if (ranCleanup) {
+        templates.forEach((t) => {
+          if (!CLEANUP_V1_KEEP.includes(tplKey(t.name))) deletedTemplates[tplKey(t.name)] = true;
+        });
+        cleanupV1 = true;
+      }
+      templates = dropDeletedTemplates(templates, deletedTemplates);
+      // Dedupe by name. mergeTemplates keys by name, so a blob written by an
+      // older build (or a half-merged one) can carry the same event twice and
+      // it would show as two identical chips.
+      {
+        const seen = new Set();
+        templates = templates.filter((t) => {
+          const k = tplKey(t.name);
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      }
+      // Reseed AFTER the tombstone filter, or a deleted entry walks back in.
+      if (!templates.length && !isTemplateDeleted(deletedTemplates, DEFAULT_TEMPLATES[0].name)) {
+        templates = DEFAULT_TEMPLATES.map((t) => ({ ...t, policyKeys: t.policyKeys.slice() }));
+      }
       // ensure seeded PBR exists if someone wiped it while keeping other names
-      if (!templates.some((t) => /pbr|rodeo/i.test(t.name))) {
+      if (!templates.some((t) => /pbr|rodeo/i.test(t.name))
+        && !isTemplateDeleted(deletedTemplates, DEFAULT_TEMPLATES[0].name)) {
         templates = [DEFAULT_TEMPLATES[0], ...templates];
       }
-      return {
+      const out = {
+        deletedTemplates,
+        tplCleanupV1: cleanupV1,
         emails: Array.isArray(raw.emails) ? raw.emails : ['thomasg@forevergoldai.com'],
         templates,
         archived: raw.archived && typeof raw.archived === 'object' ? raw.archived : {},
@@ -984,10 +1035,26 @@
         crewArchived: raw.crewArchived && typeof raw.crewArchived === 'object' ? raw.crewArchived : {},
         updatedAt: Number(raw.updatedAt) || 0,
       };
-    } catch {
+      // Persist the migration the moment it runs. Without this the flag never
+      // reaches storage, the cleanup re-runs on EVERY load, and any event
+      // created afterwards gets tombstoned on the next open — the cleanup would
+      // quietly eat new work forever. Bump updatedAt so the tombstones win the
+      // next cloud merge instead of losing to the server's older copy.
+      if (ranCleanup) {
+        out.updatedAt = Date.now();
+        try { localStorage.setItem(META_KEY, JSON.stringify(out)); } catch { /* storage full — the in-memory copy still holds */ }
+      }
+      return out;
+    } catch (err) {
+      // A silent catch here hid a real bug: any throw inside loadMeta looked
+      // exactly like "first run", quietly replacing every saved event with the
+      // default. Say so.
+      console.warn('[timeclock] loadMeta failed, falling back to defaults', err);
       return {
         emails: ['thomasg@forevergoldai.com'],
         templates: DEFAULT_TEMPLATES.map((t) => ({ ...t, policyKeys: t.policyKeys.slice() })),
+        deletedTemplates: {},
+        tplCleanupV1: true,
         archived: {},
         deleted: {},
         eventPolicy: {},
@@ -1038,12 +1105,15 @@
     return out;
   }
 
-  function mergeTemplates(localList, remoteList) {
+  function mergeTemplates(localList, remoteList, tombstones) {
     const map = new Map();
     [...(remoteList || []), ...(localList || [])].forEach((t) => {
       const n = normalizeTemplate(t);
       if (!n) return;
       const key = n.name.toLowerCase();
+      // A tombstone beats a surviving copy on either side. Without this the
+      // remote blob resurrects everything the admin just deleted.
+      if (isTemplateDeleted(tombstones, key)) return;
       const prev = map.get(key);
       if (!prev || (n.savedAt || 0) >= (prev.savedAt || 0)) map.set(key, n);
     });
@@ -1082,9 +1152,13 @@
       ? { ...(remote.eventPolicy || {}), ...(local.eventPolicy || {}) }
       : { ...(local.eventPolicy || {}), ...(remote.eventPolicy || {}) };
     const created = { ...(remote.createdAt || {}), ...(local.createdAt || {}) };
+    const mergedTplTombs = mergeBoolMaps(local.deletedTemplates, remote.deletedTemplates, localAt, remoteAt);
     return {
       emails: uniqEmails([...(remote.emails || []), ...(local.emails || [])]).slice(0, 20),
-      templates: mergeTemplates(local.templates, remote.templates),
+      // Tombstones merge FIRST so the template merge below can honour them.
+      deletedTemplates: mergedTplTombs,
+      tplCleanupV1: local.tplCleanupV1 === true || remote.tplCleanupV1 === true,
+      templates: mergeTemplates(local.templates, remote.templates, mergedTplTombs),
       archived: mergeBoolMaps(local.archived, remote.archived, localAt, remoteAt),
       deleted: mergeBoolMaps(local.deleted, remote.deleted, localAt, remoteAt),
       eventPolicy: migrateEventPolicyMap(policy),
@@ -1160,6 +1234,10 @@
           updatedAt: meta.updatedAt || Date.now(),
           emails: meta.emails,
           templates: meta.templates,
+          // Without these two in the snapshot the tombstone never leaves the
+          // phone, and the next device to sync hands every deleted chip back.
+          deletedTemplates: meta.deletedTemplates || {},
+          tplCleanupV1: meta.tplCleanupV1 === true,
           archived: meta.archived,
           deleted: meta.deleted,
           eventPolicy: meta.eventPolicy,
@@ -1284,6 +1362,8 @@
       duration: ['today', 'tomorrow', 'weekend', 'week', 'custom'].includes(extras.duration) ? extras.duration : 'custom',
       savedAt: Date.now(),
     };
+    // Creating this event again is a deliberate undo of any earlier delete.
+    if (meta.deletedTemplates) delete meta.deletedTemplates[tplKey(n)];
     const existing = meta.templates.find((t) => t.name.toLowerCase() === n.toLowerCase());
     if (existing) {
       existing.name = n;
@@ -1310,6 +1390,10 @@
       if (!ev || isMetaEvent(ev) || isDeleted(ev.id) || !ev.name) return;
       const n = String(ev.name).trim();
       if (!n) return;
+      // The second resurrection path: this backfills a chip from every live
+      // event row, so a deleted chip whose event still exists came back on the
+      // next admin load. A tombstone stops that too.
+      if (isTemplateDeleted(meta.deletedTemplates, n)) return;
       const already = meta.templates.find((t) => t.name.toLowerCase() === n.toLowerCase());
       if (already) return;
       const keys = normalizePolicyKeys(meta.eventPolicy[String(ev.id)]);
@@ -1964,21 +2048,28 @@
 
   function paintPendingEvents() {
     const note = $('eventsPending');
-    const btn = $('eventsSave');
-    if (!note || !btn) return;
+    // Two buttons, one at the top of EVENTS and one under the list, because the
+    // list is long enough on a phone that the top one scrolls out of reach.
+    const btns = eventsSaveButtons();
+    if (!note || !btns.length) return;
     const n = pendingEventDeletes.size;
     note.classList.toggle('hidden', n === 0);
     note.textContent = n ? `${n} event${n === 1 ? '' : 's'} marked to delete. Hit SAVE to remove ${n === 1 ? 'it' : 'them'} from the server for good.` : '';
-    btn.classList.toggle('primary', n > 0);
-    btn.textContent = n ? `SAVE (${n})` : 'SAVE';
+    btns.forEach((btn) => {
+      btn.classList.toggle('primary', n > 0);
+      btn.textContent = n ? `SAVE (${n})` : 'SAVE';
+    });
   }
 
-  $('eventsSave').onclick = async () => {
-    const btn = $('eventsSave');
+  function eventsSaveButtons() {
+    return [$('eventsSave'), $('eventsSaveBottom')].filter(Boolean);
+  }
+
+  async function commitEventDeletes() {
+    const btns = eventsSaveButtons();
     if (!pendingEventDeletes.size) { toast('Nothing to save — no events are marked.'); return; }
     const ids = [...pendingEventDeletes];
-    btn.disabled = true;
-    btn.textContent = 'SAVING…';
+    btns.forEach((b) => { b.disabled = true; b.textContent = 'SAVING…'; });
     let done = 0;
     const stuck = [];
     for (const id of ids) {
@@ -1993,14 +2084,16 @@
         stuck.push(id);
       }
     }
-    btn.disabled = false;
+    btns.forEach((b) => { b.disabled = false; });
     paintPendingEvents();
     lastEventsSig = '';
     loadAdminEvents();
     toast(stuck.length
       ? `Deleted ${done}. ${stuck.length} wouldn't go — still marked, try SAVE again.`
       : `Deleted ${done} event${done === 1 ? '' : 's'} from the server.`, stuck.length > 0);
-  };
+  }
+
+  eventsSaveButtons().forEach((b) => { b.onclick = commitEventDeletes; });
 
   /* ============================================================
      WEEK BY WEEK — read everyone's hours in the app, no email needed.
@@ -2503,6 +2596,13 @@
   }
 
   function removeTemplate(id) {
+    const gone = meta.templates.find((t) => t.id === id);
+    // Record the tombstone BEFORE dropping it, or the name is lost and the next
+    // cloud merge hands the chip straight back.
+    if (gone) {
+      meta.deletedTemplates = meta.deletedTemplates || {};
+      meta.deletedTemplates[tplKey(gone.name)] = true;
+    }
     meta.templates = meta.templates.filter((t) => t.id !== id);
     saveMeta(meta);
     if (selectedTemplateId === id) {
@@ -2514,7 +2614,8 @@
   function paintTemplates() {
     const box = $('evTemplates');
     box.innerHTML = '';
-    const sorted = meta.templates.slice().sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+    const sorted = dropDeletedTemplates(meta.templates, meta.deletedTemplates)
+      .slice().sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
     sorted.forEach((t) => {
       const b = document.createElement('button');
       b.type = 'button';
@@ -2722,6 +2823,7 @@
   function closeEventForm() {
     const form = $('eventForm');
     form.classList.add('hidden');
+    form.classList.remove('collapsed');
     selectedTemplateId = null;
     selectedEmails = [];
     editingEvent = null;
@@ -2748,6 +2850,7 @@
     setFormMode('create');
     const form = $('eventForm');
     form.classList.remove('hidden');
+    setEventFormCollapsed(false);
     meta = loadMeta();
     selectedTemplateId = null;
     $('evName').value = '';
@@ -2773,6 +2876,7 @@
     setFormMode('edit', ev.id);
     const form = $('eventForm');
     form.classList.remove('hidden');
+    setEventFormCollapsed(false);
     meta = loadMeta();
     selectedTemplateId = null;
     $('evName').value = ev.name || '';
@@ -2815,10 +2919,29 @@
   $('adminRefresh').onclick = loadAdmin;
   $('adminDate').onchange = loadAdmin;
   $('adminNewEvent').onclick = openEventForm;
+  /**
+   * Collapsing hides the FIELDS and keeps the NEW EVENT header with a ⌄, so the
+   * panel can be reopened. It used to hide the whole form, which made the panel
+   * vanish with nothing left to tap.
+   */
+  function setEventFormCollapsed(on) {
+    const form = $('eventForm');
+    const btn = $('eventFormCollapse');
+    form.classList.toggle('collapsed', on);
+    btn.textContent = on ? '⌄' : '⌃';
+    btn.setAttribute('aria-expanded', on ? 'false' : 'true');
+    btn.setAttribute('aria-label', on ? 'Open new event form' : 'Collapse new event form');
+    btn.title = on ? 'Open' : 'Collapse';
+  }
+
   $('eventFormCollapse').onclick = () => {
     if (eventSubmitInFlight) return;
-    closeEventForm();
-    toast('New Event closed.');
+    setEventFormCollapsed(!$('eventForm').classList.contains('collapsed'));
+  };
+  // The whole header is a target too — a 20px chevron is a poor thumb target.
+  $('eventFormCollapse').closest('.form-card-head').onclick = (e) => {
+    if (e.target.closest('#eventFormCollapse') || eventSubmitInFlight) return;
+    if ($('eventForm').classList.contains('collapsed')) setEventFormCollapsed(false);
   };
 
   function normalizedEventName(value) {
