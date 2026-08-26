@@ -1464,6 +1464,15 @@
     if (!crew.length) {
       box.innerHTML = '<p class="muted center">No profiles yet.</p>';
     }
+    // One place that paints a crew row's open/closed state: the menu itself,
+    // the trigger's label and arrow, and the `menu-open` class that lifts the
+    // whole block in front of its neighbours.
+    const paintCrewMenu = (btn, box2, open) => {
+      box2.classList.toggle('hidden', !open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.textContent = open ? 'ACTIONS \u25b4' : 'ACTIONS \u25be';
+      if (box2.parentElement) box2.parentElement.classList.toggle('menu-open', open);
+    };
     crew.forEach((p) => {
       const flag = flagFor(p.id);
       const canMakeEvents = flag.can_create_events === true;
@@ -1498,12 +1507,23 @@
       trigger.type = 'button';
       trigger.className = 'crew-toggle';
       trigger.textContent = 'ACTIONS ▾';
+      trigger.setAttribute('aria-expanded', 'false');
       const menu = document.createElement('div');
       menu.className = 'crew-menu hidden';
       trigger.onclick = () => {
-        // Close any other person's menu first so only one is ever open.
-        [...document.querySelectorAll('.crew-menu')].forEach((m) => { if (m !== menu) m.classList.add('hidden'); });
-        menu.classList.toggle('hidden');
+        const open = menu.classList.contains('hidden');
+        // Close any other person's menu first so only one is ever open, and
+        // reset that person's trigger with it.
+        document.querySelectorAll('.crew-menu').forEach((m) => {
+          if (m === menu) return;
+          const other = m.parentElement && m.parentElement.querySelector('.crew-toggle');
+          if (other) paintCrewMenu(other, m, false);
+          else m.classList.add('hidden');
+        });
+        paintCrewMenu(trigger, menu, open);
+        // The row can sit at the bottom of a phone screen, which would open the
+        // menu off-screen. Bring the whole thing into view.
+        if (open) requestAnimationFrame(() => menu.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
       };
 
       const item = (label, fn, cls = '') => {
@@ -1511,7 +1531,7 @@
         b.type = 'button';
         b.className = `crew-menu-item ${cls}`;
         b.textContent = label;
-        b.onclick = async () => { menu.classList.add('hidden'); await fn(); };
+        b.onclick = async () => { paintCrewMenu(trigger, menu, false); await fn(); };
         return b;
       };
 
@@ -1616,7 +1636,7 @@
         }, 'danger'),
       );
 
-      menuWrap.append(trigger, menu);
+      menuWrap.append(trigger);
       row.appendChild(menuWrap);
 
       // Swipe left to archive, right to delete — the same gesture the event
@@ -1626,6 +1646,14 @@
       swipe.className = 'event-swipe crew-swipe';
       swipe.innerHTML = '<div class="event-swipe-bg"><span class="arch">' + (archived ? 'RESTORE' : 'ARCHIVE') + '</span><span class="del">DELETE</span></div>';
       swipe.appendChild(row);
+      // The menu is a SIBLING of the row, not a child of it, and it is in
+      // normal flow. Inside the row it was an absolute overlay that
+      // `.crew-swipe { overflow: hidden }` sliced off at the row's bottom edge,
+      // so most of the actions were invisible. Here it makes its own room and
+      // pushes the rest of the crew list down. It also sits outside the swipe
+      // listeners (which are bound to the row), so tapping an action can never
+      // be read as a swipe.
+      swipe.appendChild(menu);
       attachSwipe(swipe, row, {
         left: async () => {
           try {
@@ -1682,9 +1710,26 @@
       box.innerHTML = '<p class="field-note form-err">Nobody is set to receive the full crew sheet. Add an address above and hit SAVE.</p>';
       return;
     }
-    box.innerHTML = `<p class="field-note muted">Saved on the server${when ? ` — ${when}` : ''}. These get the full crew sheet every Tuesday:</p>`
-      + `<div class="saved-chips">${list.map((a) => `<span class="saved-chip">${esc(a)}</span>`).join('')}</div>`;
+    box.innerHTML = `<p class="field-note muted">Saved on the server${when ? ` — ${when}` : ''}. These get the full crew sheet every Tuesday. Tap one to put it back in the box:</p>`
+      + `<div class="saved-chips">${list.map((a) => `<button type="button" class="saved-chip" data-mail="${esc(a)}">${esc(a)}</button>`).join('')}</div>`;
+    // Tapping a saved address puts it back in the field. After an accidental
+    // wipe the server's copy is the only place the list still exists, so it has
+    // to be recoverable by thumb, not by retyping it from memory.
+    box.querySelectorAll('.saved-chip').forEach((chip) => {
+      chip.onclick = () => {
+        const input = $('ownerEmails');
+        const have = input.value.split(/[,;\s]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+        const mail = chip.dataset.mail;
+        if (have.includes(mail.toLowerCase())) { toast(`${mail} is already in the box.`); return; }
+        input.value = input.value.trim() ? `${input.value.trim().replace(/,\s*$/, '')}, ${mail}` : mail;
+        toast(`${mail} added — hit SAVE to keep it.`);
+      };
+    });
   }
+
+  // The last list the server confirmed, kept so an accidental empty SAVE can be
+  // caught before it wipes a real one.
+  let lastSavedOwnerEmails = '';
 
   async function loadOwnerEmails() {
     const input = $('ownerEmails');
@@ -1698,6 +1743,7 @@
       const value = (found && found.setting_value) || '';
       input.value = value;
       adminReportEmails = dedupeEmails(value.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean));
+      lastSavedOwnerEmails = value;
       paintSavedOwners(value, found && found.updated_at ? fmtDate(String(found.updated_at).slice(0, 10)) : '');
     } catch { /* leave whatever is typed */ }
   }
@@ -1714,6 +1760,20 @@
       toast(`Not a valid email address: ${bad.join(', ')}`, true);
       return;
     }
+    // An empty box used to save straight through and silently wipe the list —
+    // which is exactly how the owners' addresses got cleared. Emptying it stops
+    // the Tuesday crew sheet reaching anybody, so it now takes a deliberate yes.
+    if (!list.length) {
+      const had = lastSavedOwnerEmails.split(/[,;\s]+/).map((a) => a.trim()).filter(Boolean);
+      if (had.length) {
+        const yes = await confirmAsk('Remove every owner address?',
+          `The box is empty. Saving it removes ${had.join(', ')} and NOBODY receives the Tuesday crew sheet. Tap an address below to put it back instead.`);
+        if (!yes) return;
+      } else {
+        toast('Nothing to save — add an address first.', true);
+        return;
+      }
+    }
     btn.disabled = true;
     btn.textContent = 'SAVING…';
     try {
@@ -1729,13 +1789,16 @@
       const confirmed = (found && found.setting_value) || '';
       $('ownerEmails').value = confirmed;
       adminReportEmails = dedupeEmails(confirmed.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean));
+      lastSavedOwnerEmails = confirmed;
       paintSavedOwners(confirmed, 'just now');
       toast(confirmed === list.join(', ')
         ? `Saved — ${list.length} admin address${list.length === 1 ? '' : 'es'} on file.`
         : 'Saved, but the server came back different — check the list below.', confirmed !== list.join(', '));
     } catch {
-      paintSavedOwners('', '');
-      toast('NOT saved — the server didn\'t take it. Try again.', true);
+      // Repaint what the server last confirmed, not a blank. Painting '' here
+      // told the admin nobody was on file when in fact the old list was intact.
+      paintSavedOwners(lastSavedOwnerEmails, '');
+      toast('NOT saved — the server didn\'t take it. Your saved list below is unchanged.', true);
     }
     btn.disabled = false;
     btn.textContent = 'SAVE';

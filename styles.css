@@ -1732,9 +1732,12 @@ body:has(#view-home:not(.hidden)) .topbar-right {
    sitting in an input looks identical whether it saved or not. */
 .saved-box { margin-top: .5rem; }
 .saved-chips { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .3rem; }
+/* Tappable: a saved address puts itself back in the box, so recovering from an
+   accidental wipe is a thumb tap rather than retyping it from memory. */
 .saved-chip {
   display: inline-block;
-  padding: .3rem .55rem;
+  padding: .45rem .7rem;
+  min-height: 34px;
   border: 1px solid rgba(47, 125, 255, .45);
   border-radius: 999px;
   background: rgba(47, 125, 255, .10);
@@ -1742,23 +1745,34 @@ body:has(#view-home:not(.hidden)) .topbar-right {
   font-size: .74rem;
   color: var(--text);
   word-break: break-all;
+  text-align: left;
+  cursor: pointer;
 }
+.saved-chip:hover { background: rgba(47, 125, 255, .2); border-color: var(--blue); }
+.saved-chip:active { background: rgba(47, 125, 255, .3); }
 
-/* Per-person actions menu in the admin crew list. */
+/* Per-person actions menu in the admin crew list.
+
+   This menu is IN FLOW, deliberately, and NOT an absolute overlay. It used to
+   be `position: absolute` inside `.crew-swipe`, which carries `overflow:
+   hidden` for the swipe gesture — so the dropdown was sliced off at the row's
+   bottom edge and only a sliver of the first item ever appeared. In flow it
+   makes its own room, pushes the rest of the crew list down, and cannot be
+   clipped by any ancestor. */
 .crew-menu-wrap { position: relative; }
 .crew-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + .35rem);
-  z-index: 40;
-  min-width: 15rem;
+  position: relative;
+  z-index: 30;
+  width: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  overflow: hidden;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, .5);
+  /* Solid base UNDER the token colour. In the redesign theme --panel-2 is
+     rgba(...,.92), and the swipe's ARCHIVE/DELETE labels sit centred behind
+     this block — at 8% they bleed through a menu this tall. */
+  background-color: #0b1120;
+  background-image: linear-gradient(var(--panel-2), var(--panel-2));
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -1px 0 rgba(255, 255, 255, .06), 0 18px 38px rgba(0, 0, 0, .55);
 }
 .crew-menu-item {
   background: none;
@@ -1766,15 +1780,27 @@ body:has(#view-home:not(.hidden)) .topbar-right {
   border-bottom: 1px solid var(--line);
   color: var(--text);
   text-align: left;
-  padding: .7rem .85rem;
-  font-size: .85rem;
-  min-height: 44px;
+  padding: .85rem 1rem;
+  font-size: .9rem;
+  min-height: 48px;
   cursor: pointer;
 }
 .crew-menu-item:last-child { border-bottom: 0; }
 .crew-menu-item:hover { background: rgba(47, 125, 255, .14); }
 .crew-menu-item.danger { color: #ff7a8a; }
 .crew-menu-item.danger:hover { background: rgba(255, 90, 110, .14); }
+.crew-menu-item:active { background: rgba(47, 125, 255, .2); }
+/* The open row reads as one raised block: trigger lit, menu attached beneath. */
+.crew-toggle[aria-expanded="true"] {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #031018;
+}
+.crew-swipe.menu-open { z-index: 20; }
+/* The swipe labels only mean anything mid-drag, and you cannot be mid-drag with
+   a menu open — so get them out from behind it entirely. */
+.crew-swipe.menu-open .event-swipe-bg { opacity: 0; }
+.crew-swipe.menu-open .crew-item { border-bottom-color: transparent; }
 .crew-item.is-archived { opacity: .55; }
 .crew-item.is-archived .crew-name em { font-style: normal; color: var(--muted); font-size: .75rem; }
 
