@@ -4,10 +4,23 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-const puppeteer = createRequire('/Users/tg2.0/Documents/Claude/')('puppeteer');
+// Puppeteer normally comes from ~/Documents/Claude. PUPPETEER_ROOT points the
+// resolver somewhere else (a scratch install, CI) without editing this file.
+const puppeteer = createRequire(process.env.PUPPETEER_ROOT || '/Users/tg2.0/Documents/Claude/')('puppeteer');
 
-const ROOT = '/Users/tg2.0/Documents/FGA-Brain/client-sites/timeclock';
+const ROOT = '/Users/tg2.0/Documents/FGA-Brain/FGA-AIOS/clients/justus-entertainment/website/timeclock';
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.jpg': 'image/jpeg', '.png': 'image/png' };
+
+// Read the live backend base out of config.js instead of hardcoding a host, so
+// this stub keeps matching whatever the app is actually pointed at. It used to
+// hardcode the n8n webhook host and went silently inert when the backend moved
+// to the Cloudflare Worker.
+const TC_API = (() => {
+  const src = fs.readFileSync(path.join(ROOT, 'config.js'), 'utf8');
+  const m = src.match(/^\s*window\.TC_API\s*=\s*'([^']+)'/m);
+  if (!m) throw new Error('config.js does not assign window.TC_API');
+  return m[1].replace(/\/+$/, '');
+})();
 
 const server = http.createServer((req, res) => {
   const p = decodeURIComponent(req.url.split('?')[0]);
@@ -59,8 +72,8 @@ async function runScenario(label, events, drive) {
   page.on('request', (req) => {
     const url = req.url();
     if (url.startsWith('https://fonts.')) return req.respond({ status: 200, body: '' });
-    if (!url.includes('tggai.app.n8n.cloud/webhook/')) return req.continue();
-    const route = url.split('/webhook/')[1].split('?')[0];
+    if (!url.startsWith(`${TC_API}/`)) return req.continue();
+    const route = url.slice(TC_API.length + 1).split('?')[0];
     if (req.method() === 'OPTIONS') {
       return req.respond({
         status: 204,

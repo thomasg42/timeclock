@@ -89,13 +89,65 @@
   setInterval(tickClocks, 1000);
   tickClocks();
 
-  /* ---------- view router ---------- */
+  /* ---------- view router ----------
+
+     Every page owns a URL (#home, #create, #select, #profile, #admin). Before
+     this the whole app lived at one address: a refresh always dumped you back
+     on the home screen, the phone's back arrow left the site entirely, and the
+     only way home was tapping the brand. Now a refresh keeps you where you
+     were and back/forward walk the pages.
+
+     VIEW_PARENT is what the on-screen back arrow follows — deterministic "up
+     one level", so it can never bounce you out of the app the way a raw
+     history.back() can when the page was opened cold on a URL. */
   const VIEWS = ['home', 'create', 'select', 'profile', 'admin'];
+  const VIEW_PARENT = { home: null, create: 'home', select: 'home', profile: 'select', admin: 'home' };
+  let applyingHash = false;
+
   function show(view) {
     VIEWS.forEach((v) => $(`view-${v}`).classList.toggle('hidden', v !== view));
     window.scrollTo(0, 0);
     if (view !== 'admin') stopAdminPoll();
+    const back = $('backBtn');
+    if (back) back.classList.toggle('hidden', !VIEW_PARENT[view]);
+    // Never push while a hash is being applied — that would fight the entry the
+    // browser is already sitting on and break forward navigation.
+    if (!applyingHash && location.hash !== `#${view}`) history.pushState(null, '', `#${view}`);
   }
+
+  function currentView() {
+    return VIEWS.find((v) => !$(`view-${v}`).classList.contains('hidden')) || 'home';
+  }
+
+  function syncHash(view) {
+    if (location.hash !== `#${view}`) history.replaceState(null, '', `#${view}`);
+  }
+
+  /**
+   * The URL decides which page is showing. Runs on boot, on hashchange, and on
+   * back/forward. Idempotent, because a traversal fires both popstate and
+   * hashchange and this must not do the work twice.
+   */
+  function routeFromHash() {
+    const raw = String(location.hash || '').replace(/^#/, '').toLowerCase();
+    let view = VIEWS.includes(raw) ? raw : 'home';
+    // A refresh keeps the URL but not the in-memory state. A page that needs
+    // state it no longer has redirects to the one that can rebuild it. #admin
+    // is safe to land on cold — openAdmin re-shows the PIN gate, so a bookmark
+    // or a refresh can never walk straight into the dashboard.
+    if (view === 'profile' && !current.profile) view = 'select';
+    if (currentView() === view) { syncHash(view); return; }
+    applyingHash = true;
+    try {
+      if (view === 'admin') openAdmin();
+      else if (view === 'select') { show('select'); loadProfiles(); }
+      else show(view);
+    } finally { applyingHash = false; }
+    syncHash(view);
+  }
+
+  window.addEventListener('hashchange', routeFromHash);
+  window.addEventListener('popstate', routeFromHash);
 
   function spinnerHtml() {
     return '<span class="tc-spinner" aria-hidden="true"></span> ';
@@ -121,6 +173,13 @@
   $('btnGoCreate').onclick = () => show('create');
   $('btnGoSelect').onclick = () => { show('select'); loadProfiles(); };
   $('adminBtn').onclick = () => { openAdmin(); };
+  // Up one level, never out of the app. The phone's own back button still walks
+  // the full history separately.
+  $('backBtn').onclick = () => {
+    const parent = VIEW_PARENT[currentView()] || 'home';
+    if (parent === 'select') { show('select'); loadProfiles(); }
+    else show(parent);
+  };
 
   /* ============================================================
      PROFILES
@@ -2954,6 +3013,11 @@
       }
     }
   };
+
+  /* ---------- boot: the URL decides which page opens ----------
+     Last, not at the top: routing can call openAdmin/loadProfiles, so every
+     view function has to exist before the first route runs. */
+  routeFromHash();
 
   /* ---------- QA hooks (harmless in production) ---------- */
   window.__tc = {
