@@ -1788,3 +1788,17 @@ body:has(#view-home:not(.hidden)) .topbar-right {
 .event-item.pending-del { opacity: .5; }
 .event-item.pending-del .ev-name { text-decoration: line-through; }
 .badge.willdel { background: rgba(255, 90, 110, .18); color: #ff7a8a; border-color: rgba(255, 90, 110, .5); }
+
+/* Event-creation button on a permitted worker's own profile screen. */
+.pf-create-event { margin: .2rem 0 1rem; }
+
+/* Week-by-week record at the bottom of the admin screen. */
+.week-nav { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin: .5rem 0 .7rem; }
+.week-label { font-family: var(--mono); font-size: .82rem; letter-spacing: .04em; text-align: center; flex: 1; }
+.week-body { margin-bottom: 1.4rem; }
+.week-person { border: 1px solid var(--line); border-radius: 10px; padding: .6rem .75rem; margin-bottom: .5rem; background: var(--panel); }
+.week-person-head { display: flex; justify-content: space-between; gap: .6rem; font-weight: 700; margin-bottom: .35rem; }
+.week-person-hours { font-family: var(--mono); color: var(--in-green); }
+.week-shift { display: flex; justify-content: space-between; gap: .6rem; font-size: .78rem; color: var(--white-dim); padding: .18rem 0; border-top: 1px solid var(--line); }
+.week-shift.open { color: #ff7a8a; }
+.week-total { display: flex; justify-content: space-between; font-weight: 700; padding-top: .5rem; }

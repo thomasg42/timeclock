@@ -84,6 +84,9 @@
     <!-- top center action -->
     <div id="pfAction" class="pf-action"></div>
 
+    <!-- only rendered for crew an admin has switched ON for event creation -->
+    <div id="pfCreateEvent" class="pf-create-event hidden"></div>
+
     <h3 class="section-label">SHIFT HISTORY</h3>
     <div id="pfHistory" class="history-list">
       <p class="muted center">Loading…</p>
@@ -153,6 +156,18 @@
       <p class="event-hint muted center">Every event you have ever made is listed here. Tap one for details + policies. DELETE marks it to go — nothing leaves the server until you hit SAVE.</p>
       <p class="field-note hidden" id="eventsPending"></p>
       <div id="adminEvents" class="event-list"></div>
+
+      <!-- Week-by-week record, for reading hours without going to email -->
+      <div class="section-head">
+        <h3 class="section-label">WEEK BY WEEK</h3>
+        <button type="button" class="chip-btn" id="weekReload">REFRESH</button>
+      </div>
+      <div class="week-nav">
+        <button type="button" class="chip-btn" id="weekPrev">← EARLIER</button>
+        <span class="week-label" id="weekLabel">—</span>
+        <button type="button" class="chip-btn" id="weekNext">LATER →</button>
+      </div>
+      <div id="weekBody" class="week-body"><p class="muted center">Open a week to see everyone's hours.</p></div>
 
       <form id="eventForm" class="card form-card hidden">
         <div class="form-card-head">

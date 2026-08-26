@@ -207,7 +207,71 @@
     $('pfName').textContent = `${profile.first_name} ${profile.last_name}`;
     $('pfMeta').textContent = profile.email || '';
     show('profile');
+    renderCreateEventAccess(profile);
     await refreshProfile();
+  }
+
+  /**
+   * Whoever an admin has switched ON in Crew can post an event themselves —
+   * the first person to arrive doesn't have to wait for Thomas or Josh. They
+   * cannot delete one: deleting is still behind the admin PIN, by design.
+   */
+  async function renderCreateEventAccess(profile) {
+    const slot = $('pfCreateEvent');
+    if (!slot) return;
+    slot.classList.add('hidden');
+    slot.innerHTML = '';
+    let allowed = false;
+    try {
+      allowed = rows(await api('tc-crew-flags'))
+        .some((f) => String(f.profile_id) === String(profile.id) && f.can_create_events === true);
+    } catch { return; }
+    if (!allowed) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'big-btn outline';
+    btn.innerHTML = '<span class="big-btn-title">＋ CREATE EVENT</span><span class="big-btn-sub">Everyone will see it on the clock-in list</span>';
+    btn.onclick = async () => {
+      const name = window.prompt('Event name (e.g. Maintenance at Midtown)', '');
+      if (!name || !name.trim()) return;
+      const day = window.prompt('Which day? (YYYY-MM-DD)', localDate());
+      if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day.trim())) {
+        if (day !== null) toast('That date needs to look like 2026-08-25.', true);
+        return;
+      }
+      const startH = window.prompt('Start time, 24-hour (e.g. 16:00)', '16:00');
+      if (startH === null) return;
+      const endH = window.prompt('End time, 24-hour (e.g. 23:00)', '23:00');
+      if (endH === null) return;
+      if (!/^\d{1,2}:\d{2}$/.test(startH.trim()) || !/^\d{1,2}:\d{2}$/.test(endH.trim())) {
+        toast('Times need to look like 16:00.', true);
+        return;
+      }
+      const startISO = localISO(new Date(`${day.trim()}T${startH.trim().padStart(5, '0')}:00`));
+      let end = new Date(`${day.trim()}T${endH.trim().padStart(5, '0')}:00`);
+      // An end time earlier than the start means it runs past midnight.
+      if (end <= new Date(`${day.trim()}T${startH.trim().padStart(5, '0')}:00`)) end = new Date(end.getTime() + 86400000);
+      btn.disabled = true;
+      try {
+        await api('tc-events', {
+          method: 'POST',
+          body: JSON.stringify({
+            creator_id: profile.id,
+            name: name.trim(),
+            start_at: startISO,
+            end_at: localISO(end),
+            owner_email: '',
+          }),
+        });
+        toast(`"${name.trim()}" is live — everyone can clock into it now.`);
+      } catch {
+        toast('Couldn\'t create that event — ask Thomas or Josh.', true);
+      }
+      btn.disabled = false;
+    };
+    slot.appendChild(btn);
+    slot.classList.remove('hidden');
   }
 
   async function refreshProfile() {
@@ -1277,7 +1341,7 @@
 
   function openAdmin() {
     show('admin');
-    if (adminPinOk) { $('adminGate').classList.add('hidden'); $('adminDash').classList.remove('hidden'); loadAdmin(); startAdminPoll(); return; }
+    if (adminPinOk) { $('adminGate').classList.add('hidden'); $('adminDash').classList.remove('hidden'); loadAdmin(); loadWeekView({ force: true }); startAdminPoll(); return; }
     adminPin = '';
     paintPin();
     $('adminGate').classList.remove('hidden');
@@ -1306,6 +1370,7 @@
         toast('Syncing admin state across devices…', false, 2200);
         await ensureMetaSynced({ allowPush: true });
         loadAdmin();
+        loadWeekView({ force: true });
         startAdminPoll();
       } catch {
         $('pinErr').classList.remove('hidden');
@@ -1814,6 +1879,79 @@
       ? `Deleted ${done}. ${stuck.length} wouldn't go — still marked, try SAVE again.`
       : `Deleted ${done} event${done === 1 ? '' : 's'} from the server.`, stuck.length > 0);
   };
+
+  /* ============================================================
+     WEEK BY WEEK — read everyone's hours in the app, no email needed.
+     Weeks are named by their date range (Thomas, 2026-08-25), and the pay
+     week runs Wednesday → Tuesday to match the sheet that gets emailed.
+     ============================================================ */
+
+  // All punches are fetched ONCE and paged through in the browser. Executions
+  // are billed, so a week view must not cost seven calls to walk seven days.
+  let weekPunches = null;
+  let weekOffset = 0; // 0 = the week we are in now, -1 = the week before it
+
+  function weekRange(offset = 0) {
+    const now = new Date();
+    const dow = now.getDay();                    // 0 Sun … 6 Sat
+    const toTuesday = (2 - dow + 7) % 7;         // forward to this week's Tuesday
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + toTuesday + offset * 7);
+    const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 6);
+    return { start: localDate(start), end: localDate(end) };
+  }
+
+  const weekTitle = (r) => {
+    const f = (ymd) => new Date(`${ymd}T12:00:00`).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return `${f(r.start)} – ${f(r.end)}, ${r.end.slice(0, 4)}`;
+  };
+
+  async function loadWeekView(opts = {}) {
+    const body = $('weekBody');
+    const range = weekRange(weekOffset);
+    $('weekLabel').textContent = weekTitle(range);
+    if (!weekPunches || opts.force) {
+      body.innerHTML = `<p class="muted center">${spinnerHtml()}Loading…</p>`;
+      try {
+        weekPunches = rows(await api(`tc-punches-all?pass=${encodeURIComponent(adminPinOk)}`));
+      } catch {
+        body.innerHTML = '<p class="form-err center">Couldn\'t load the record.</p>';
+        return;
+      }
+    }
+
+    const mine = weekPunches
+      .filter((p) => String(p.work_date || '') >= range.start && String(p.work_date || '') <= range.end)
+      .sort((a, b) => String(a.clock_in).localeCompare(String(b.clock_in)));
+
+    if (!mine.length) {
+      body.innerHTML = '<p class="muted center">Nobody clocked in this week.</p>';
+      return;
+    }
+
+    const byWho = {};
+    mine.forEach((p) => { (byWho[p.profile_name || '—'] = byWho[p.profile_name || '—'] || []).push(p); });
+
+    let grand = 0;
+    body.innerHTML = Object.keys(byWho).sort().map((who) => {
+      const shifts = byWho[who];
+      const total = shifts.reduce((sum, p) => sum + (shiftHours(p) || 0), 0);
+      grand += total;
+      return `<div class="week-person">
+        <div class="week-person-head"><span>${esc(who)}</span><span class="week-person-hours">${total.toFixed(2)} h</span></div>
+        ${shifts.map((p) => {
+          const h = shiftHours(p);
+          return `<div class="week-shift${h == null ? ' open' : ''}">
+            <span>${fmtDate(p.work_date)} · ${esc(p.event_name || '')}</span>
+            <span>${fmtTime(p.clock_in)} → ${p.clock_out ? fmtTime(p.clock_out) : 'still on the clock'} · ${h == null ? '—' : h.toFixed(2) + ' h'}</span>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }).join('') + `<div class="week-total"><span>TOTAL</span><span>${grand.toFixed(2)} h</span></div>`;
+  }
+
+  $('weekPrev').onclick = () => { weekOffset -= 1; loadWeekView(); };
+  $('weekNext').onclick = () => { if (weekOffset < 0) { weekOffset += 1; loadWeekView(); } };
+  $('weekReload').onclick = () => loadWeekView({ force: true });
 
   function buildEventRow(ev) {
     const ended = ev.end_at && new Date(ev.end_at) <= new Date();
