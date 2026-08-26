@@ -1841,6 +1841,20 @@ body:has(#view-home:not(.hidden)) .topbar-right {
 }
 .events-save-bottom .field-note { margin: 0; flex: 1 1 12rem; }
 
+/* Permitted-crew Create Event form on the profile screen. Native date/time
+   inputs so a phone gives its own pickers instead of five prompt boxes. */
+.pf-create-form {
+  margin-top: .7rem;
+  padding: .9rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.pf-when { display: flex; gap: .5rem; flex-wrap: wrap; }
+.pf-when input { flex: 1 1 8rem; min-height: 44px; }
+.pf-create-form .field-block { margin-bottom: .8rem; }
+.pf-create-form .big-btn { width: 100%; }
+
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
 .section-head .section-label { margin: 0; }
 .event-item.pending-del { opacity: .5; }

@@ -287,49 +287,95 @@
     } catch { return; }
     if (!allowed) return;
 
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'big-btn outline';
-    btn.innerHTML = '<span class="big-btn-title">＋ CREATE EVENT</span><span class="big-btn-sub">Everyone will see it on the clock-in list</span>';
-    btn.onclick = async () => {
-      const name = window.prompt('Event name (e.g. Maintenance at Midtown)', '');
-      if (!name || !name.trim()) return;
-      const day = window.prompt('Which day? (YYYY-MM-DD)', localDate());
-      if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day.trim())) {
-        if (day !== null) toast('That date needs to look like 2026-08-25.', true);
-        return;
-      }
-      const startH = window.prompt('Start time, 24-hour (e.g. 16:00)', '16:00');
-      if (startH === null) return;
-      const endH = window.prompt('End time, 24-hour (e.g. 23:00)', '23:00');
-      if (endH === null) return;
-      if (!/^\d{1,2}:\d{2}$/.test(startH.trim()) || !/^\d{1,2}:\d{2}$/.test(endH.trim())) {
-        toast('Times need to look like 16:00.', true);
-        return;
-      }
-      const startISO = localISO(new Date(`${day.trim()}T${startH.trim().padStart(5, '0')}:00`));
-      let end = new Date(`${day.trim()}T${endH.trim().padStart(5, '0')}:00`);
-      // An end time earlier than the start means it runs past midnight.
-      if (end <= new Date(`${day.trim()}T${startH.trim().padStart(5, '0')}:00`)) end = new Date(end.getTime() + 86400000);
+    /* A real form with native date/time pickers, not five window.prompt boxes.
+       Prompts could only ever describe ONE day, and an event that runs Friday
+       to Sunday is normal here — so start and end each get their own date. */
+    slot.innerHTML = `
+      <button type="button" class="big-btn outline" id="pfCreateToggle">
+        <span class="big-btn-title">＋ CREATE EVENT</span>
+        <span class="big-btn-sub">Everyone will see it on the clock-in list</span>
+      </button>
+      <div class="pf-create-form hidden" id="pfCreateForm">
+        <div class="field-block">
+          <label class="field-label" for="pfEvName">Event name</label>
+          <input type="text" id="pfEvName" maxlength="60" autocomplete="off" placeholder="e.g. Maintenance at Midtown">
+        </div>
+        <div class="field-block">
+          <span class="field-label">Starts</span>
+          <div class="pf-when">
+            <input type="date" id="pfEvStartDate">
+            <input type="time" id="pfEvStartTime" value="16:00">
+          </div>
+        </div>
+        <div class="field-block">
+          <span class="field-label">Ends</span>
+          <div class="pf-when">
+            <input type="date" id="pfEvEndDate">
+            <input type="time" id="pfEvEndTime" value="23:00">
+          </div>
+          <p class="field-note muted">Same day for a normal shift. Set a later end date for anything that runs more than one day.</p>
+        </div>
+        <p class="form-err hidden" id="pfEvErr"></p>
+        <button type="button" class="big-btn primary" id="pfEvCreate"><span class="big-btn-title">CREATE EVENT</span></button>
+      </div>`;
+
+    const form = $('pfCreateForm');
+    const errBox = $('pfEvErr');
+    const today = localDate();
+    $('pfEvStartDate').value = today;
+    $('pfEvEndDate').value = today;
+
+    $('pfCreateToggle').onclick = () => {
+      form.classList.toggle('hidden');
+      if (!form.classList.contains('hidden')) $('pfEvName').focus();
+    };
+
+    const fail = (msg) => { errBox.textContent = msg; errBox.classList.remove('hidden'); };
+
+    $('pfEvCreate').onclick = async () => {
+      errBox.classList.add('hidden');
+      const name = String($('pfEvName').value || '').trim().replace(/\s+/g, ' ');
+      const sd = $('pfEvStartDate').value;
+      const st = $('pfEvStartTime').value;
+      const ed = $('pfEvEndDate').value;
+      const et = $('pfEvEndTime').value;
+      if (name.length < 2) return fail('Give the event a name first.');
+      if (!sd || !st || !ed || !et) return fail('Fill in both dates and both times.');
+      const startAt = new Date(`${sd}T${st}`);
+      let endAt = new Date(`${ed}T${et}`);
+      if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) return fail('That date or time didn\'t read right.');
+      // Same day with an earlier end time means it runs past midnight — the
+      // normal case for a night shift, so roll it rather than reject it.
+      let rolled = false;
+      if (endAt <= startAt && sd === ed) { endAt = new Date(endAt.getTime() + 86400000); rolled = true; }
+      if (endAt <= startAt) return fail('The end has to come after the start.');
+
+      const btn = $('pfEvCreate');
       btn.disabled = true;
+      btn.querySelector('.big-btn-title').textContent = 'CREATING…';
       try {
         await api('tc-events', {
           method: 'POST',
           body: JSON.stringify({
             creator_id: profile.id,
-            name: name.trim(),
-            start_at: startISO,
-            end_at: localISO(end),
+            name,
+            start_at: localISO(startAt),
+            end_at: localISO(endAt),
             owner_email: '',
           }),
         });
-        toast(`"${name.trim()}" is live — everyone can clock into it now.`);
+        toast(rolled
+          ? `"${name}" is live — it ends the next morning, everyone can clock into it now.`
+          : `"${name}" is live — everyone can clock into it now.`, false, 4500);
+        $('pfEvName').value = '';
+        form.classList.add('hidden');
       } catch {
-        toast('Couldn\'t create that event — ask Thomas or Josh.', true);
+        fail('Couldn\'t create that event — ask Thomas or Josh.');
       }
       btn.disabled = false;
+      btn.querySelector('.big-btn-title').textContent = 'CREATE EVENT';
     };
-    slot.appendChild(btn);
+
     slot.classList.remove('hidden');
   }
 
@@ -493,6 +539,9 @@
       const clean = String(n || '').trim();
       const key = clean.toLowerCase();
       if (clean.length < 2 || seen.has(key)) return;
+      // A worker's own history still names events the admin has since deleted.
+      // Offering those would walk a deleted event back into the punch table.
+      if (isTemplateDeleted(meta.deletedTemplates, clean)) return;
       seen.add(key);
       out.push(clean);
     };
@@ -519,23 +568,30 @@
           !isMetaEvent(ev) && !isDeleted(ev.id) && !isArchived(ev.id) && (!ev.end_at || new Date(ev.end_at) > new Date()));
       } catch { /* no scheduled events reachable — typing a job still works */ }
 
+      /* Clocking in is TAP-ONLY (Thomas, 2026-08-26). The free-text box is gone
+         on purpose: a typed job created an ad-hoc event that carried no policy
+         packs, and one typo made a second event that split a crew's hours
+         across two names on the time sheet. Creating an event — with its name
+         and its date range — belongs in Create Event, to whoever is permitted.
+         Here you pick from what already exists. */
+      const saved = recentJobNames(events);
+      const hasChoices = events.length > 0 || saved.length > 0;
       const sub = events.length
-        ? 'Tap a scheduled event, or type what you\'re working on.'
-        : 'No event is scheduled right now — just type what you\'re working on.';
+        ? 'Tap the event you\'re working.'
+        : hasChoices
+          ? 'Nothing is scheduled right now — tap one of the saved events.'
+          : 'Nothing to clock into yet.';
       body.innerHTML = `
         <div class="wiz-title">WHAT'S THIS JOB FOR?</div>
         <div class="wiz-sub">${sub}</div>
         ${events.length ? '<div class="wiz-events" id="wizEvents"></div>' : ''}
+        ${saved.length ? `
         <div class="field-block wiz-job">
-          <span class="field-label">${events.length ? 'Or type the job' : 'Type the job'}</span>
-          <div class="wiz-job-row">
-            <input id="wizJobName" type="text" maxlength="60" autocomplete="off"
-                   enterkeyhint="go" placeholder="e.g. Maintenance on Midtown">
-            <button class="chip-btn primary" id="wizJobGo" type="button">USE</button>
-          </div>
+          <span class="field-label">${events.length ? 'Other saved events' : 'Saved events'}</span>
           <div class="template-chips" id="wizJobChips"></div>
-          <p class="form-err hidden" id="wizJobErr"></p>
-        </div>`;
+        </div>` : ''}
+        ${hasChoices ? '' : `
+        <p class="form-err center">No events have been set up yet. Whoever runs the schedule needs to add one under CREATE EVENT first — clock-in only picks from that list.</p>`}`;
 
       const choose = (ev) => { wiz.event = ev; wiz.step = 1; renderWizard(); };
 
@@ -554,35 +610,30 @@
         });
       }
 
-      const input = $('wizJobName');
-      const err = $('wizJobErr');
-      const useTyped = () => {
-        const clean = String(input.value || '').trim().replace(/\s+/g, ' ');
-        if (clean.length < 2) {
-          err.textContent = 'Type what the job is first.';
-          err.classList.remove('hidden');
-          input.focus();
-          return;
-        }
-        // Typing the name of a live scheduled event clocks into that real event,
-        // so its policy packs still apply instead of being bypassed.
+      /**
+       * A saved name resolves to the LIVE scheduled event of that name whenever
+       * one exists, so its policy packs still apply. Only when nothing live
+       * matches does it fall back to an ad-hoc event, and the id comes from
+       * jobSlug so two people tapping the same name land on one event and their
+       * hours group together on the sheet.
+       */
+      const chooseByName = (name) => {
+        const clean = String(name || '').trim().replace(/\s+/g, ' ');
+        if (clean.length < 2) return;
         const scheduled = events.find((ev) => String(ev.name || '').trim().toLowerCase() === clean.toLowerCase());
         choose(scheduled || { id: jobSlug(clean), name: clean, adhoc: true });
       };
-      $('wizJobGo').onclick = useTyped;
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); useTyped(); }
-      });
-      input.addEventListener('input', () => err.classList.add('hidden'));
 
       const chips = $('wizJobChips');
-      recentJobNames(events).forEach((name) => {
-        const c = document.createElement('button');
-        c.type = 'button';
-        c.textContent = name;
-        c.onclick = () => { input.value = name; useTyped(); };
-        chips.appendChild(c);
-      });
+      if (chips) {
+        saved.forEach((name) => {
+          const c = document.createElement('button');
+          c.type = 'button';
+          c.textContent = name;
+          c.onclick = () => chooseByName(name);
+          chips.appendChild(c);
+        });
+      }
       return;
     }
 
@@ -3145,6 +3196,9 @@
   /* ---------- QA hooks (harmless in production) ---------- */
   window.__tc = {
     show, openProfile, loadProfiles, api,
+    // The real functions, not test-only wrappers — a hook that reimplements the
+    // path it is meant to check proves nothing.
+    startWizard, renderCreateEventAccess,
     get current() { return current; },
     get meta() { return meta; },
     ensureMetaSynced, pushCloudMeta, pullAndMergeCloudMeta,
