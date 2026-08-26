@@ -1383,8 +1383,15 @@
       if (!silent) box.innerHTML = '<p class="form-err center">Couldn\'t load the crew.</p>';
       return;
     }
+    // Archive and event-permission live on the SERVER now (tc_crew_flags), not
+    // in the device meta blob — the Tuesday email builder has to be able to see
+    // them, and it cannot read the blob. Archiving therefore really does stop
+    // someone's email, and restoring really does turn it back on.
+    let flagRows = [];
+    try { flagRows = rows(await api('tc-crew-flags')); } catch { /* fall back to no flags */ }
+    const flagFor = (id) => flagRows.find((f) => String(f.profile_id) === String(id)) || {};
     crew.sort((a, b) => `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`));
-    const sig = crew.map((p) => `${p.id}~${p.first_name}~${p.last_name}~${p.email}~${meta.crewPerms[String(p.id)] === true}~${meta.crewArchived[String(p.id)] === true}`).join('|');
+    const sig = crew.map((p) => `${p.id}~${p.first_name}~${p.last_name}~${p.email}~${flagFor(p.id).can_create_events === true}~${flagFor(p.id).archived === true}`).join('|');
     if (silent && sig === lastCrewSig) return;
     lastCrewSig = sig;
 
@@ -1393,9 +1400,23 @@
       box.innerHTML = '<p class="muted center">No profiles yet.</p>';
     }
     crew.forEach((p) => {
-      const pid = String(p.id);
-      const canMakeEvents = meta.crewPerms[pid] === true;
-      const archived = meta.crewArchived[pid] === true;
+      const flag = flagFor(p.id);
+      const canMakeEvents = flag.can_create_events === true;
+      const archived = flag.archived === true;
+      const saveFlags = async (next) => {
+        await api('tc-profile-admin', {
+          method: 'POST',
+          body: JSON.stringify({
+            pass: adminPinOk,
+            action: 'flags',
+            profile_id: p.id,
+            archived: next.archived,
+            can_create_events: next.can_create_events,
+          }),
+        });
+        lastCrewSig = '';
+        loadCrew();
+      };
       const row = document.createElement('div');
       row.className = `crew-item${archived ? ' is-archived' : ''}`;
       row.innerHTML = `
@@ -1498,25 +1519,21 @@
             loadCrew();
           } catch { toast('Couldn\'t save that profile — try again.', true); }
         }),
-        item(canMakeEvents ? '★ Can create events — ON' : '☆ Can create events — OFF', () => {
-          meta = loadMeta();
-          if (meta.crewPerms[pid] === true) delete meta.crewPerms[pid];
-          else meta.crewPerms[pid] = true;
-          saveMeta(meta);
-          toast(meta.crewPerms[pid] === true
-            ? `${p.first_name} can create events.`
-            : `${p.first_name} can no longer create events.`);
-          lastCrewSig = '';
-          loadCrew();
+        item(canMakeEvents ? '★ Can create events — ON' : '☆ Can create events — OFF', async () => {
+          try {
+            await saveFlags({ archived, can_create_events: !canMakeEvents });
+            toast(!canMakeEvents
+              ? `${p.first_name} can create events.`
+              : `${p.first_name} can no longer create events.`);
+          } catch { toast('Couldn\'t save that — try again.', true); }
         }),
-        item(archived ? '↩ Restore' : '📦 Archive', () => {
-          meta = loadMeta();
-          if (meta.crewArchived[pid] === true) delete meta.crewArchived[pid];
-          else meta.crewArchived[pid] = true;
-          saveMeta(meta);
-          toast(meta.crewArchived[pid] === true ? `${p.first_name} archived.` : `${p.first_name} restored.`);
-          lastCrewSig = '';
-          loadCrew();
+        item(archived ? '↩ Restore' : '📦 Archive', async () => {
+          try {
+            await saveFlags({ archived: !archived, can_create_events: canMakeEvents });
+            toast(!archived
+              ? `${p.first_name} archived — they stop getting the Tuesday email.`
+              : `${p.first_name} restored — their Tuesday email starts again.`);
+          } catch { toast('Couldn\'t save that — try again.', true); }
         }),
         item('✕ Delete person', async () => {
           const yes = await confirmAsk(`Delete ${p.first_name} ${p.last_name}?`,
@@ -1536,7 +1553,39 @@
 
       menuWrap.append(trigger, menu);
       row.appendChild(menuWrap);
-      box.appendChild(row);
+
+      // Swipe left to archive, right to delete — the same gesture the event
+      // rows use, wired to the same functions the menu items call so the two
+      // can never disagree.
+      const swipe = document.createElement('div');
+      swipe.className = 'event-swipe crew-swipe';
+      swipe.innerHTML = '<div class="event-swipe-bg"><span class="arch">' + (archived ? 'RESTORE' : 'ARCHIVE') + '</span><span class="del">DELETE</span></div>';
+      swipe.appendChild(row);
+      attachSwipe(swipe, row, {
+        left: async () => {
+          try {
+            await saveFlags({ archived: !archived, can_create_events: canMakeEvents });
+            toast(!archived
+              ? `${p.first_name} archived — they stop getting the Tuesday email.`
+              : `${p.first_name} restored — their Tuesday email starts again.`);
+          } catch { row.style.transform = ''; toast('Couldn\'t save that — try again.', true); }
+        },
+        right: async () => {
+          const yes = await confirmAsk(`Delete ${p.first_name} ${p.last_name}?`,
+            'Their profile is removed for good. Archive instead if they are only away for a while — that stops the email but keeps them.');
+          if (!yes) { row.style.transform = ''; return; }
+          try {
+            await api('tc-profile-admin', {
+              method: 'POST',
+              body: JSON.stringify({ pass: adminPinOk, action: 'delete', profile_id: p.id }),
+            });
+            toast(`${p.first_name} deleted.`);
+            lastCrewSig = '';
+            loadCrew();
+          } catch { row.style.transform = ''; toast('Couldn\'t delete that profile — try again.', true); }
+        },
+      });
+      box.appendChild(swipe);
     });
     loadOwnerEmails();
   }

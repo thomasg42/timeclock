@@ -1777,3 +1777,7 @@ body:has(#view-home:not(.hidden)) .topbar-right {
 .crew-menu-item.danger:hover { background: rgba(255, 90, 110, .14); }
 .crew-item.is-archived { opacity: .55; }
 .crew-item.is-archived .crew-name em { font-style: normal; color: var(--muted); font-size: .75rem; }
+
+/* Crew rows swipe like event rows: left archives, right deletes. */
+.crew-swipe { position: relative; overflow: hidden; margin-bottom: .5rem; }
+.crew-swipe .crew-item { position: relative; z-index: 2; background: var(--panel); }
