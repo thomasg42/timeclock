@@ -1743,3 +1743,37 @@ body:has(#view-home:not(.hidden)) .topbar-right {
   color: var(--text);
   word-break: break-all;
 }
+
+/* Per-person actions menu in the admin crew list. */
+.crew-menu-wrap { position: relative; }
+.crew-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + .35rem);
+  z-index: 40;
+  min-width: 15rem;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .5);
+}
+.crew-menu-item {
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  text-align: left;
+  padding: .7rem .85rem;
+  font-size: .85rem;
+  min-height: 44px;
+  cursor: pointer;
+}
+.crew-menu-item:last-child { border-bottom: 0; }
+.crew-menu-item:hover { background: rgba(47, 125, 255, .14); }
+.crew-menu-item.danger { color: #ff7a8a; }
+.crew-menu-item.danger:hover { background: rgba(255, 90, 110, .14); }
+.crew-item.is-archived { opacity: .55; }
+.crew-item.is-archived .crew-name em { font-style: normal; color: var(--muted); font-size: .75rem; }

@@ -854,6 +854,11 @@
         eventPolicy: migrateEventPolicyMap(raw.eventPolicy),
         createdAt: raw.createdAt && typeof raw.createdAt === 'object' ? raw.createdAt : {},
         eventEdits: raw.eventEdits && typeof raw.eventEdits === 'object' ? raw.eventEdits : {},
+        // Per-person admin flags. These gate UI only — the admin PIN is the
+        // real lock — so they ride the shared meta blob and sync across
+        // devices without needing a column the data table cannot grow.
+        crewPerms: raw.crewPerms && typeof raw.crewPerms === 'object' ? raw.crewPerms : {},
+        crewArchived: raw.crewArchived && typeof raw.crewArchived === 'object' ? raw.crewArchived : {},
         updatedAt: Number(raw.updatedAt) || 0,
       };
     } catch {
@@ -865,6 +870,8 @@
         eventPolicy: {},
         createdAt: {},
         eventEdits: {},
+        crewPerms: {},
+        crewArchived: {},
         updatedAt: 0,
       };
     }
@@ -960,6 +967,8 @@
       eventPolicy: migrateEventPolicyMap(policy),
       createdAt: created,
       eventEdits: mergeEdits(local.eventEdits, remote.eventEdits),
+      crewPerms: mergeBoolMaps(local.crewPerms, remote.crewPerms, localAt, remoteAt),
+      crewArchived: mergeBoolMaps(local.crewArchived, remote.crewArchived, localAt, remoteAt),
       updatedAt: Math.max(localAt, remoteAt),
     };
   }
@@ -1033,6 +1042,8 @@
           eventPolicy: meta.eventPolicy,
           createdAt: meta.createdAt,
           eventEdits: meta.eventEdits,
+          crewPerms: meta.crewPerms,
+          crewArchived: meta.crewArchived,
         };
         if (snapshot.updatedAt <= lastPushedAt) return true;
         const owner = encodeMetaBlob(snapshot);
@@ -1373,7 +1384,7 @@
       return;
     }
     crew.sort((a, b) => `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`));
-    const sig = crew.map((p) => `${p.id}~${p.weekly_email === true}`).join('|');
+    const sig = crew.map((p) => `${p.id}~${p.first_name}~${p.last_name}~${p.email}~${meta.crewPerms[String(p.id)] === true}~${meta.crewArchived[String(p.id)] === true}`).join('|');
     if (silent && sig === lastCrewSig) return;
     lastCrewSig = sig;
 
@@ -1382,43 +1393,149 @@
       box.innerHTML = '<p class="muted center">No profiles yet.</p>';
     }
     crew.forEach((p) => {
-      const on = p.weekly_email === true;
+      const pid = String(p.id);
+      const canMakeEvents = meta.crewPerms[pid] === true;
+      const archived = meta.crewArchived[pid] === true;
       const row = document.createElement('div');
-      row.className = 'crew-item';
+      row.className = `crew-item${archived ? ' is-archived' : ''}`;
       row.innerHTML = `
         <span class="crew-who">
-          <span class="crew-name">${esc(p.first_name)} ${esc(p.last_name)}</span>
+          <span class="crew-name">${esc(p.first_name)} ${esc(p.last_name)}${archived ? ' <em>(archived)</em>' : ''}</span>
           <span class="crew-mail">${esc(p.email || 'no email on file')}</span>
         </span>`;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = `crew-toggle${on ? ' on' : ''}`;
-      btn.textContent = on ? 'WEEKLY SHEET: ON' : 'WEEKLY SHEET: OFF';
-      btn.disabled = !p.email;
-      if (!p.email) btn.title = 'This profile has no email address.';
-      btn.onclick = async () => {
-        const next = !(p.weekly_email === true);
-        btn.disabled = true;
-        btn.textContent = 'SAVING…';
-        try {
-          await api('tc-perm', {
-            method: 'POST',
-            body: JSON.stringify({ pass: adminPinOk, profile_id: p.id, weekly_email: next }),
-          });
-          p.weekly_email = next;
-          lastCrewSig = '';
-          btn.classList.toggle('on', next);
-          btn.textContent = next ? 'WEEKLY SHEET: ON' : 'WEEKLY SHEET: OFF';
-          toast(next
-            ? `${p.first_name} will get their own sheet every Tuesday.`
-            : `${p.first_name} will no longer be emailed.`);
-        } catch {
-          btn.textContent = on ? 'WEEKLY SHEET: ON' : 'WEEKLY SHEET: OFF';
-          toast('Couldn\'t save that — try again.', true);
-        }
-        btn.disabled = false;
+
+      // One menu per person instead of a single toggle: clock in, clock out,
+      // edit their details, grant event creation, archive, delete.
+      const menuWrap = document.createElement('div');
+      menuWrap.className = 'crew-menu-wrap';
+      const trigger = document.createElement('button');
+      trigger.type = 'button';
+      trigger.className = 'crew-toggle';
+      trigger.textContent = 'ACTIONS ▾';
+      const menu = document.createElement('div');
+      menu.className = 'crew-menu hidden';
+      trigger.onclick = () => {
+        // Close any other person's menu first so only one is ever open.
+        [...document.querySelectorAll('.crew-menu')].forEach((m) => { if (m !== menu) m.classList.add('hidden'); });
+        menu.classList.toggle('hidden');
       };
-      row.appendChild(btn);
+
+      const item = (label, fn, cls = '') => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = `crew-menu-item ${cls}`;
+        b.textContent = label;
+        b.onclick = async () => { menu.classList.add('hidden'); await fn(); };
+        return b;
+      };
+
+      const openPunch = async () => {
+        const hist = rows(await api(`tc-history?profileId=${encodeURIComponent(p.id)}`));
+        return hist.find((x) => x.status === 'in' || x.status === 'break') || null;
+      };
+
+      menu.append(
+        item('⏱ Clock in', async () => {
+          const open = await openPunch().catch(() => null);
+          if (open) { toast(`${p.first_name} is already on the clock.`, true); return; }
+          const job = window.prompt(`What job is ${p.first_name} clocking in for?`, '');
+          if (!job || !job.trim()) return;
+          try {
+            await api('tc-punch', {
+              method: 'POST',
+              body: JSON.stringify({
+                action: 'clock_in',
+                profile_id: p.id,
+                profile_name: `${p.first_name} ${p.last_name}`,
+                event_id: `job-${job.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+                event_name: job.trim(),
+                work_date: localDate(),
+                clock_in: localISO(),
+                photos: {},
+                policies_acked: [],
+              }),
+            });
+            toast(`${p.first_name} clocked in.`);
+            lastPunchesSig = '';
+            loadAdmin();
+          } catch { toast('Couldn\'t clock them in — try again.', true); }
+        }),
+        item('⏹ Clock out', async () => {
+          let open;
+          try { open = await openPunch(); } catch { toast('Couldn\'t reach the clock.', true); return; }
+          if (!open) { toast(`${p.first_name} isn't clocked in.`, true); return; }
+          try {
+            await api('tc-punch', {
+              method: 'POST',
+              body: JSON.stringify({ action: 'clock_out', punch_id: open.id, time: localISO() }),
+            });
+            toast(`${p.first_name} clocked out.`);
+            lastPunchesSig = '';
+            loadAdmin();
+          } catch { toast('Couldn\'t clock them out — try again.', true); }
+        }),
+        item('✎ Edit profile', async () => {
+          const first = window.prompt('First name', p.first_name || '');
+          if (first === null) return;
+          const last = window.prompt('Last name', p.last_name || '');
+          if (last === null) return;
+          const email = window.prompt('Email address', p.email || '');
+          if (email === null) return;
+          if (!first.trim() || !last.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
+            toast('First name, last name and a valid email are all required.', true);
+            return;
+          }
+          try {
+            await api('tc-profile-admin', {
+              method: 'POST',
+              body: JSON.stringify({
+                pass: adminPinOk, action: 'update', profile_id: p.id,
+                first_name: first.trim(), last_name: last.trim(), email: email.trim(),
+              }),
+            });
+            toast('Profile updated.');
+            lastCrewSig = '';
+            loadCrew();
+          } catch { toast('Couldn\'t save that profile — try again.', true); }
+        }),
+        item(canMakeEvents ? '★ Can create events — ON' : '☆ Can create events — OFF', () => {
+          meta = loadMeta();
+          if (meta.crewPerms[pid] === true) delete meta.crewPerms[pid];
+          else meta.crewPerms[pid] = true;
+          saveMeta(meta);
+          toast(meta.crewPerms[pid] === true
+            ? `${p.first_name} can create events.`
+            : `${p.first_name} can no longer create events.`);
+          lastCrewSig = '';
+          loadCrew();
+        }),
+        item(archived ? '↩ Restore' : '📦 Archive', () => {
+          meta = loadMeta();
+          if (meta.crewArchived[pid] === true) delete meta.crewArchived[pid];
+          else meta.crewArchived[pid] = true;
+          saveMeta(meta);
+          toast(meta.crewArchived[pid] === true ? `${p.first_name} archived.` : `${p.first_name} restored.`);
+          lastCrewSig = '';
+          loadCrew();
+        }),
+        item('✕ Delete person', async () => {
+          const yes = await confirmAsk(`Delete ${p.first_name} ${p.last_name}?`,
+            'Their profile is removed for good. Shifts already recorded stay on the day sheet unless you delete those too.');
+          if (!yes) return;
+          try {
+            await api('tc-profile-admin', {
+              method: 'POST',
+              body: JSON.stringify({ pass: adminPinOk, action: 'delete', profile_id: p.id }),
+            });
+            toast(`${p.first_name} deleted.`);
+            lastCrewSig = '';
+            loadCrew();
+          } catch { toast('Couldn\'t delete that profile — try again.', true); }
+        }, 'danger'),
+      );
+
+      menuWrap.append(trigger, menu);
+      row.appendChild(menuWrap);
       box.appendChild(row);
     });
     loadOwnerEmails();
