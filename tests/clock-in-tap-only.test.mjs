@@ -79,9 +79,13 @@ const baseMeta = (templates, deletedTemplates = {}) => ({
   check('its USE button is gone too', !/wizJobGo/.test(js) && !/wizJobGo/.test(html));
 }
 
-/* ---------- 2. step 0 renders taps only ---------- */
+/* ---------- 2. only a job that is running RIGHT NOW is offered ---------- */
 {
-  const evs = [{ id: 9, name: 'Wildlands', start_at: future(-1), end_at: future(6), owner_email: '' }];
+  const evs = [
+    { id: 9, name: 'Wildlands', start_at: future(-1), end_at: future(6), owner_email: '' },   // live now
+    { id: 10, name: 'Next Saturday', start_at: future(120), end_at: future(130), owner_email: '' }, // not started
+    { id: 11, name: 'Last Week', start_at: future(-200), end_at: future(-190), owner_email: '' },   // finished
+  ];
   const a = boot({ events: evs, meta: baseMeta([tpl('t1', 'Rbar')]) });
   const tc = a.shim.__tc;
   tc.current.profile = { id: 7, first_name: 'Dee', last_name: 'R' };
@@ -89,46 +93,45 @@ const baseMeta = (templates, deletedTemplates = {}) => ({
   await tc.startWizard();
   const body = a.document.getElementById('wizBody');
   check('no text input is rendered on the job step',
-    body.querySelectorAll('input[type="text"], input:not([type])').length === 0,
-    `${body.querySelectorAll('input').length} inputs`);
+    body.querySelectorAll('input').length === 0, `${body.querySelectorAll('input').length} inputs`);
   const live = a.document.getElementById('wizEvents');
-  check('the live scheduled event is offered as a tap', !!live && live.children.length === 1,
-    live ? `${live.children.length}` : 'missing');
-  const chips = a.document.getElementById('wizJobChips');
-  const names = chips ? [...chips.children].map((c) => c.textContent) : [];
-  // PBR is reseeded by loadMeta whenever no pbr/rodeo entry survives, so the
-  // saved list here is Rbar plus that seed — two chips, both taps.
-  check('the saved event is offered as a tap', names.includes('Rbar'), names.join(','));
-  check('every saved option is a button, never a field',
-    !!chips && [...chips.children].every((c) => c.tagName === 'BUTTON'), names.join(','));
+  const shown = live ? [...live.children].map((c) => c.textContent) : [];
+  check('the running event is offered', shown.some((t) => t.includes('Wildlands')), shown.join(' | '));
+  check('an event that has not started yet is NOT offered',
+    !shown.some((t) => t.includes('Next Saturday')), shown.join(' | '));
+  check('an event that already finished is NOT offered',
+    !shown.some((t) => t.includes('Last Week')), shown.join(' | '));
+  check('exactly one option is shown', live && live.children.length === 1, `${shown.length}`);
+  check('every option is a button, never a field',
+    !!live && [...live.children].every((c) => c.tagName === 'BUTTON'));
+  check('saved events are NOT offered as a fallback', !a.document.getElementById('wizJobChips'));
 }
 
-/* ---------- 3. a deleted Choose Event must not reappear as a clock-in option ---------- */
+/* ---------- 3. a saved event with nothing running gives the worker nothing ---------- */
 {
-  const a = boot({ events: [], meta: baseMeta([tpl('t1', 'Rbar')], { 'real test event': true }) });
+  const a = boot({ events: [], meta: baseMeta([tpl('t1', 'Rbar'), tpl('t2', 'Music in the mountains')]) });
   const tc = a.shim.__tc;
   tc.current.profile = { id: 7, first_name: 'Dee', last_name: 'R' };
-  tc.current.punches = [{ id: 1, event_name: 'Real Test Event' }, { id: 2, event_name: 'Rbar' }];
+  tc.current.punches = [{ id: 1, event_name: 'Rbar' }];
   await tc.startWizard();
-  const chips = a.document.getElementById('wizJobChips');
-  const names = chips ? [...chips.children].map((c) => c.textContent) : [];
-  check('a tombstoned name is not offered from punch history', !names.includes('Real Test Event'), names.join(','));
-  check('a live saved name still is', names.includes('Rbar'), names.join(','));
+  const body = a.document.getElementById('wizBody');
+  check('no saved-event chips appear when nothing is live', !a.document.getElementById('wizJobChips'));
+  check('no input appears either', body.querySelectorAll('input').length === 0);
+  check('the worker is told nothing is active', /No job is active right now/.test(body.textContent),
+    body.textContent.replace(/\s+/g, ' ').slice(0, 100));
 }
 
-/* ---------- 4. nothing to clock into says so, rather than letting you type ----------
-   Reaching this needs PBR tombstoned too: loadMeta reseeds PBR whenever no
-   pbr/rodeo entry survives, so in normal use a worker always has at least one
-   option and can never be stranded with no way to clock in. */
+/* ---------- 4. an event with no usable dates is not offered ---------- */
 {
-  const a = boot({ events: [], meta: baseMeta([], { 'pbr / rodeo — big sky': true }) });
+  const evs = [{ id: 12, name: 'Broken Dates', start_at: '', end_at: '', owner_email: '' }];
+  const a = boot({ events: evs, meta: baseMeta([]) });
   const tc = a.shim.__tc;
   tc.current.profile = { id: 7, first_name: 'Dee', last_name: 'R' };
   tc.current.punches = [];
   await tc.startWizard();
-  const body = a.document.getElementById('wizBody');
-  check('with nothing set up, no input appears', body.querySelectorAll('input').length === 0);
-  check('and it explains what to do', /CREATE EVENT/.test(body.textContent), body.textContent.slice(0, 120));
+  check('an event with no start/end is not offered',
+    !a.document.getElementById('wizEvents'),
+    a.document.getElementById('wizBody').textContent.replace(/\s+/g, ' ').slice(0, 80));
 }
 
 /* ---------- 5. permitted crew get a real form with a start AND end date ---------- */

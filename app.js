@@ -531,25 +531,6 @@
 
   $('wizClose').onclick = () => { stopStream(); $('wizard').classList.add('hidden'); wiz = null; };
 
-  /* one-tap chips for jobs this worker already clocked into, plus saved admin job names */
-  function recentJobNames(events) {
-    const seen = new Set((events || []).map((ev) => String(ev.name || '').trim().toLowerCase()));
-    const out = [];
-    const push = (n) => {
-      const clean = String(n || '').trim();
-      const key = clean.toLowerCase();
-      if (clean.length < 2 || seen.has(key)) return;
-      // A worker's own history still names events the admin has since deleted.
-      // Offering those would walk a deleted event back into the punch table.
-      if (isTemplateDeleted(meta.deletedTemplates, clean)) return;
-      seen.add(key);
-      out.push(clean);
-    };
-    (current.punches || []).forEach((p) => push(p.event_name)); // already newest-first
-    (meta.templates || []).forEach((t) => push(t.name));
-    return out.slice(0, 6);
-  }
-
   async function renderWizard() {
     if (!wiz) return;
     const body = $('wizBody');
@@ -564,34 +545,37 @@
         meta = loadMeta();
         await (metaSyncReady || Promise.resolve());
         await ensureMetaSynced({ allowPush: false });
-        events = rows(await api('tc-events')).map(applyEventEdit).filter((ev) =>
-          !isMetaEvent(ev) && !isDeleted(ev.id) && !isArchived(ev.id) && (!ev.end_at || new Date(ev.end_at) > new Date()));
-      } catch { /* no scheduled events reachable — typing a job still works */ }
+        // LIVE RIGHT NOW only. The old filter kept anything not yet finished,
+        // which offered events that had not started — so a worker could clock
+        // into next Saturday's gig today. An event is offered only while the
+        // clock is actually inside its window.
+        const now = Date.now();
+        events = rows(await api('tc-events')).map(applyEventEdit).filter((ev) => {
+          if (isMetaEvent(ev) || isDeleted(ev.id) || isArchived(ev.id)) return false;
+          const startsAt = Date.parse(ev.start_at || '');
+          const endsAt = Date.parse(ev.end_at || '');
+          if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt)) return false;
+          return startsAt <= now && now <= endsAt;
+        });
+      } catch { /* couldn't reach the schedule — the empty state below says so */ }
 
-      /* Clocking in is TAP-ONLY (Thomas, 2026-08-26). The free-text box is gone
-         on purpose: a typed job created an ad-hoc event that carried no policy
-         packs, and one typo made a second event that split a crew's hours
-         across two names on the time sheet. Creating an event — with its name
-         and its date range — belongs in Create Event, to whoever is permitted.
-         Here you pick from what already exists. */
-      const saved = recentJobNames(events);
-      const hasChoices = events.length > 0 || saved.length > 0;
+      /* Clocking in is TAP-ONLY, and only ACTIVE events are offered (Thomas,
+         2026-08-26). No text box and no saved-event chips: both could put a
+         worker on a job that is not running, and a typed one created an ad-hoc
+         event carrying no policy packs — one typo split a crew's hours across
+         two names on the time sheet. If nothing is live, nothing is offered.
+         Creating an event belongs in Create Event, to whoever is permitted. */
       const sub = events.length
         ? 'Tap the event you\'re working.'
-        : hasChoices
-          ? 'Nothing is scheduled right now — tap one of the saved events.'
-          : 'Nothing to clock into yet.';
+        : 'Nothing is running right now.';
       body.innerHTML = `
         <div class="wiz-title">WHAT'S THIS JOB FOR?</div>
         <div class="wiz-sub">${sub}</div>
-        ${events.length ? '<div class="wiz-events" id="wizEvents"></div>' : ''}
-        ${saved.length ? `
-        <div class="field-block wiz-job">
-          <span class="field-label">${events.length ? 'Other saved events' : 'Saved events'}</span>
-          <div class="template-chips" id="wizJobChips"></div>
-        </div>` : ''}
-        ${hasChoices ? '' : `
-        <p class="form-err center">No events have been set up yet. Whoever runs the schedule needs to add one under CREATE EVENT first — clock-in only picks from that list.</p>`}`;
+        ${events.length
+          ? '<div class="wiz-events" id="wizEvents"></div>'
+          : `<p class="form-err center">No job is active right now, so there is nothing to clock into.
+             A job only appears here while it is running. If you should be working, ask whoever runs
+             the schedule to create the event under CREATE EVENT.</p>`}`;
 
       const choose = (ev) => { wiz.event = ev; wiz.step = 1; renderWizard(); };
 
@@ -610,30 +594,6 @@
         });
       }
 
-      /**
-       * A saved name resolves to the LIVE scheduled event of that name whenever
-       * one exists, so its policy packs still apply. Only when nothing live
-       * matches does it fall back to an ad-hoc event, and the id comes from
-       * jobSlug so two people tapping the same name land on one event and their
-       * hours group together on the sheet.
-       */
-      const chooseByName = (name) => {
-        const clean = String(name || '').trim().replace(/\s+/g, ' ');
-        if (clean.length < 2) return;
-        const scheduled = events.find((ev) => String(ev.name || '').trim().toLowerCase() === clean.toLowerCase());
-        choose(scheduled || { id: jobSlug(clean), name: clean, adhoc: true });
-      };
-
-      const chips = $('wizJobChips');
-      if (chips) {
-        saved.forEach((name) => {
-          const c = document.createElement('button');
-          c.type = 'button';
-          c.textContent = name;
-          c.onclick = () => chooseByName(name);
-          chips.appendChild(c);
-        });
-      }
       return;
     }
 
