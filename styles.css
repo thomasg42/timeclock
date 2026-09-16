@@ -998,8 +998,56 @@ body:has(#view-home:not(.hidden)) .topbar-right {
   display: none;
 }
 
-#view-home .hero {
+/* ---------- home welcome banner ---------- */
+.welcome {
+  margin: 0 0 clamp(.85rem, 3vh, 1.35rem);
+  padding: 0 .4rem;
+  text-align: center;
+}
+
+.welcome-kicker {
+  display: block;
+  margin-bottom: .45rem;
+  color: var(--show-gold);
+  font-size: clamp(.6rem, 2.4vw, .82rem);
+  letter-spacing: .34em;
+  text-transform: uppercase;
+}
+
+.welcome-title {
+  font-family: var(--display);
+  font-size: clamp(1.4rem, 6.2vw, 2.55rem);
+  font-weight: 400;
+  line-height: 1.02;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  color: #fff;
+  -webkit-text-stroke: .5px #fff;
+  text-shadow:
+    1px 1px 0 #0b1b30,
+    2px 2px 0 var(--blue-dim),
+    3px 3px 0 #082037,
+    0 0 30px rgba(90, 200, 255, .22);
+}
+
+.welcome-title em {
+  color: var(--blue);
+  font-style: normal;
+  -webkit-text-stroke-color: #fff;
+  text-shadow:
+    1px 1px 0 #071d3d,
+    2px 2px 0 #1555a1,
+    0 0 16px rgba(90, 200, 255, .4);
+}
+
+/* The welcome now carries the auto margin that bottom-anchors the home stack,
+   so the greeting travels with the clock instead of being stranded up top. */
+#view-home .welcome {
   margin-top: auto;
+}
+
+#view-home .hero {
+  margin-top: 0;
   margin-bottom: clamp(1rem, 3vh, 1.5rem);
   padding: clamp(1rem, 4vh, 2rem) 1rem;
   border-color: rgba(255, 255, 255, .82);
@@ -1019,7 +1067,7 @@ body:has(#view-home:not(.hidden)) .topbar-right {
 
 #view-home .home-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 #view-home .big-btn {
@@ -1571,8 +1619,23 @@ body:has(#view-home:not(.hidden)) .topbar-right {
     padding-bottom: .9rem;
   }
 
-  #view-home .hero {
+  #view-home .welcome {
     margin-top: auto;
+    margin-bottom: .7rem;
+  }
+
+  #view-home .welcome-kicker {
+    margin-bottom: .3rem;
+    font-size: .62rem;
+    letter-spacing: .28em;
+  }
+
+  #view-home .welcome-title {
+    font-size: clamp(1.3rem, 7vw, 1.85rem);
+  }
+
+  #view-home .hero {
+    margin-top: 0;
     padding: .75rem .6rem .85rem;
   }
 
@@ -1874,3 +1937,68 @@ body:has(#view-home:not(.hidden)) .topbar-right {
 .week-shift { display: flex; justify-content: space-between; gap: .6rem; font-size: .78rem; color: var(--white-dim); padding: .18rem 0; border-top: 1px solid var(--line); }
 .week-shift.open { color: #ff7a8a; }
 .week-total { display: flex; justify-content: space-between; font-weight: 700; padding-top: .5rem; }
+
+/* ============================================================
+   WAITING ON A MANAGER — employee app only (split 2026-09-10)
+   Nothing has been stamped yet. This card has to be unmistakable, because the
+   old flow ended on the word CONGRATULATIONS and a worker who reads this as
+   "done" will walk away unpaid.
+   ============================================================ */
+.waiting-card {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--blue);
+  border-radius: 14px;
+  padding: 1.1rem .95rem 1rem;
+  text-align: center;
+  overflow: hidden;
+}
+.waiting-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, var(--blue), transparent);
+  animation: waitSweep 2.1s ease-in-out infinite;
+}
+@keyframes waitSweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.waiting-pulse {
+  width: 14px;
+  height: 14px;
+  margin: .1rem auto .55rem;
+  border-radius: 50%;
+  background: var(--blue);
+  box-shadow: 0 0 0 0 rgba(90, 200, 255, .55);
+  animation: waitPulse 1.8s ease-out infinite;
+}
+@keyframes waitPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(90, 200, 255, .55); }
+  70%  { box-shadow: 0 0 0 14px rgba(90, 200, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(90, 200, 255, 0); }
+}
+
+.waiting-title {
+  font-family: var(--display);
+  font-size: 1.15rem;
+  letter-spacing: .02em;
+  color: var(--white);
+}
+.waiting-sub { margin-top: .4rem; font-size: .92rem; color: var(--text); line-height: 1.45; }
+.waiting-hint {
+  margin-top: .55rem;
+  font-family: var(--mono);
+  font-size: .72rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.waiting-cancel { margin-top: .85rem; }
+
+/* Motion here is decoration on a screen someone is stuck on. Anyone who has
+   asked the OS for less of it gets a static card instead. */
+@media (prefers-reduced-motion: reduce) {
+  .waiting-card::before, .waiting-pulse { animation: none; }
+}

@@ -1,6 +1,12 @@
 /* ============================================================
-   JustUs Entertainment TimeClock — app logic
+   JustUs Entertainment TimeClock — EMPLOYEE app logic
    Backend: n8n cloud webhooks (see config.js)
+
+   This is the EMPLOYEE half of the split (2026-09-10). Tapping CLOCK IN no
+   longer stamps anything: it files a REQUEST and puts the worker on a waiting
+   screen. An admin, standing in front of them on the admin app, approves it —
+   and that tap is the stamp. There is no admin section in this app at all.
+   Admin app: ../timeclock-admin/ (separate repo, separate URL).
    ============================================================ */
 (() => {
   'use strict';
@@ -100,14 +106,14 @@
      VIEW_PARENT is what the on-screen back arrow follows — deterministic "up
      one level", so it can never bounce you out of the app the way a raw
      history.back() can when the page was opened cold on a URL. */
-  const VIEWS = ['home', 'create', 'select', 'profile', 'admin'];
-  const VIEW_PARENT = { home: null, create: 'home', select: 'home', profile: 'select', admin: 'home' };
+  const VIEWS = ['home', 'create', 'select', 'profile'];
+  const VIEW_PARENT = { home: null, create: 'home', select: 'home', profile: 'select' };
   let applyingHash = false;
 
   function show(view) {
     VIEWS.forEach((v) => $(`view-${v}`).classList.toggle('hidden', v !== view));
     window.scrollTo(0, 0);
-    if (view !== 'admin') stopAdminPoll();
+    if (view !== 'profile') stopPendingPoll();
     const back = $('backBtn');
     if (back) back.classList.toggle('hidden', !VIEW_PARENT[view]);
     // Never push while a hash is being applied — that would fight the entry the
@@ -132,15 +138,12 @@
     const raw = String(location.hash || '').replace(/^#/, '').toLowerCase();
     let view = VIEWS.includes(raw) ? raw : 'home';
     // A refresh keeps the URL but not the in-memory state. A page that needs
-    // state it no longer has redirects to the one that can rebuild it. #admin
-    // is safe to land on cold — openAdmin re-shows the PIN gate, so a bookmark
-    // or a refresh can never walk straight into the dashboard.
+    // state it no longer has redirects to the one that can rebuild it.
     if (view === 'profile' && !current.profile) view = 'select';
     if (currentView() === view) { syncHash(view); return; }
     applyingHash = true;
     try {
-      if (view === 'admin') openAdmin();
-      else if (view === 'select') { show('select'); loadProfiles(); }
+      if (view === 'select') { show('select'); loadProfiles(); }
       else show(view);
     } finally { applyingHash = false; }
     syncHash(view);
@@ -153,26 +156,9 @@
     return '<span class="tc-spinner" aria-hidden="true"></span> ';
   }
 
-  /* ---------- admin live sync: poll while the dashboard is open so a
-     change made on another device shows up without hitting refresh ---------- */
-  let adminPollTimer = null;
-  function stopAdminPoll() {
-    if (adminPollTimer) { clearInterval(adminPollTimer); adminPollTimer = null; }
-  }
-  function startAdminPoll() {
-    stopAdminPoll();
-    adminPollTimer = setInterval(() => {
-      if (adminPinOk && !$('view-admin').classList.contains('hidden')) loadAdmin({ silent: true });
-    }, 20000);
-  }
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && adminPinOk && !$('view-admin').classList.contains('hidden')) loadAdmin({ silent: true });
-  });
-
   $('brandHome').onclick = () => show('home');
   $('btnGoCreate').onclick = () => show('create');
   $('btnGoSelect').onclick = () => { show('select'); loadProfiles(); };
-  $('adminBtn').onclick = () => { openAdmin(); };
   // Up one level, never out of the app. The phone's own back button still walks
   // the full history separately.
   $('backBtn').onclick = () => {
@@ -267,7 +253,11 @@
     $('pfMeta').textContent = profile.email || '';
     show('profile');
     renderCreateEventAccess(profile);
+    // Load before refreshing: a request filed earlier (or before the app was
+    // closed) has to be known about before the screen decides what to draw.
+    loadPendingReq();
     await refreshProfile();
+    startPendingPoll();
   }
 
   /**
@@ -379,33 +369,62 @@
     slot.classList.remove('hidden');
   }
 
-  async function refreshProfile() {
+  async function refreshProfile(opts = {}) {
+    const silent = opts.silent === true;
     const histBox = $('pfHistory');
-    $('pfAction').innerHTML = '<p class="muted center">Loading…</p>';
-    histBox.innerHTML = '<p class="muted center">Loading…</p>';
+    if (!silent) {
+      $('pfAction').innerHTML = '<p class="muted center">Loading…</p>';
+      histBox.innerHTML = '<p class="muted center">Loading…</p>';
+    }
     try {
       const punches = rows(await api(`tc-history?profileId=${encodeURIComponent(current.profile.id)}`))
         .sort((a, b) => String(b.clock_in).localeCompare(String(a.clock_in)));
       current.punches = punches;
       current.open = punches.find((p) => p.status === 'in' || p.status === 'break') || null;
+
+      /* Did a manager act while this phone was waiting? The approved punch
+         appearing in the worker's OWN history is the proof — no extra endpoint
+         and no extra n8n execution just to ask "am I in yet?". */
+      if (pendingReq) {
+        if (pendingReq.kind === 'clock_in' && current.open) {
+          savePendingReq(null);
+          stopPendingPoll();
+          toast('You\'re on the clock. Have a good shift!', false, 5000);
+        } else if (pendingReq.kind === 'clock_out') {
+          const done = punches.find((x) => String(x.id) === String(pendingReq.punch_id) && x.status === 'out');
+          if (done) {
+            savePendingReq(null);
+            stopPendingPoll();
+            showSummary(done);
+          }
+        }
+      }
+
       renderAction();
       renderHistory();
     } catch {
-      $('pfAction').innerHTML = '<p class="form-err center">Couldn\'t reach the time clock. Retry.</p>';
-      histBox.innerHTML = '';
+      if (!silent) {
+        $('pfAction').innerHTML = '<p class="form-err center">Couldn\'t reach the time clock. Retry.</p>';
+        histBox.innerHTML = '';
+      }
     }
   }
 
   function renderAction() {
     const box = $('pfAction');
     box.innerHTML = '';
+
+    // A filed request outranks every other state. Until a manager acts, the
+    // only honest thing this screen can say is that nothing has been stamped.
+    if (pendingReq) { renderWaitingCard(box); return; }
+
     const p = current.open;
 
     if (!p) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'big-btn green';
-      btn.innerHTML = '<span class="big-btn-title">⏱ CLOCK IN</span><span class="big-btn-sub">Create clock-in time</span>';
+      btn.innerHTML = '<span class="big-btn-title">⏱ CLOCK IN</span><span class="big-btn-sub">Asks a manager to let you in</span>';
       btn.onclick = startWizard;
       box.appendChild(btn);
       return;
@@ -448,13 +467,12 @@
     const out = document.createElement('button');
     out.type = 'button';
     out.className = 'big-btn danger';
-    out.innerHTML = '<span class="big-btn-title">CLOCK OUT</span><span class="big-btn-sub">End your shift</span>';
+    out.innerHTML = '<span class="big-btn-title">ASK TO CLOCK OUT</span><span class="big-btn-sub">A manager confirms it</span>';
     out.disabled = onBreak;
     out.title = onBreak ? 'End your break first' : '';
-    out.onclick = async () => {
-      const updated = await punchUpdate('clock_out', 'Are you sure?', 'This ends your shift and stamps your clock-out time.');
-      if (updated) showSummary(updated);
-    };
+    // Clocking out is a request too — the summary now appears when the manager
+    // approves it, driven by the same poll that watches for the clock-in.
+    out.onclick = requestClockOut;
     box.appendChild(out);
   }
 
@@ -730,9 +748,9 @@
       if (!packs.length) {
         body.innerHTML = `
           <div class="wiz-title">READY TO CLOCK IN</div>
-          <div class="wiz-sub">No policy pack on <b>${esc(wiz.event.name)}</b>. Hit the button and you're on the clock.</div>
+          <div class="wiz-sub">No policy pack on <b>${esc(wiz.event.name)}</b>. Hit the button and a manager gets your request.</div>
           <div class="wiz-actions">
-            <button class="big-btn green" id="wizPunch" type="button"><span class="big-btn-title">⏱ CLOCK IN NOW</span></button>
+            <button class="big-btn green" id="wizPunch" type="button"><span class="big-btn-title">⏱ ASK TO CLOCK IN</span></button>
           </div>
           <p class="form-err hidden" id="wizErr" style="margin-top:.7rem"></p>`;
         $('wizPunch').onclick = submitClockIn;
@@ -751,7 +769,7 @@
         </label>
         <div class="wiz-actions">
           <button class="big-btn green" id="wizPunch" type="button" disabled>
-            <span class="big-btn-title">OK — CLOCK IN</span>
+            <span class="big-btn-title">OK — ASK TO CLOCK IN</span>
           </button>
         </div>
         <p class="form-err hidden" id="wizErr" style="margin-top:.7rem"></p>`;
@@ -784,12 +802,16 @@
       return;
     }
 
-    /* step 3 — congratulations (shown after successful punch) */
-    $('wizStep').textContent = policiesForEvent(wiz.event).length ? 'STEP 4/4 — DONE' : 'STEP 3/3 — DONE';
+    /* step 3 — request filed. NOT clocked in: this used to say CONGRATULATIONS
+       and it must never say that again, because at this point nothing has been
+       stamped. A manager still has to approve it on the admin app. */
+    $('wizStep').textContent = policiesForEvent(wiz.event).length ? 'STEP 4/4 — SENT' : 'STEP 3/3 — SENT';
     body.innerHTML = `
       <div class="wiz-congrats">
-        <div class="wiz-title">CONGRATULATIONS</div>
-        <div class="wiz-sub">You are now clocked in for <b>${esc(wiz.event.name)}</b>.</div>
+        <div class="wiz-title">REQUEST SENT</div>
+        <div class="wiz-sub">You are <b>not on the clock yet</b>. A manager has to let you in for
+          <b>${esc(wiz.event.name)}</b>. Go find whoever is running the door — the second they
+          tap CLOCK IN, this page updates by itself.</div>
         <div class="wiz-actions">
           <button class="big-btn primary" id="wizDone" type="button"><span class="big-btn-title">DONE</span></button>
         </div>
@@ -827,37 +849,181 @@
     btn.disabled = true;
     const title = btn.querySelector('.big-btn-title');
     const originalLabel = title ? title.textContent : '';
-    if (title) title.textContent = 'STAMPING…';
+    if (title) title.textContent = 'SENDING…';
     try {
-      await api('tc-punch', {
+      // This posts to tc-request, NOT tc-punch. No punch row exists until an
+      // admin approves it, so nothing here can put hours on a time sheet.
+      const created = await api('tc-request', {
         method: 'POST',
         body: JSON.stringify({
-          action: 'clock_in',
+          action: 'request',
+          kind: 'clock_in',
           profile_id: current.profile.id,
           profile_name: `${current.profile.first_name} ${current.profile.last_name}`,
           event_id: wiz.event.id,
           event_name: wiz.event.name,
           work_date: localDate(),
-          clock_in: localISO(),
+          requested_at: localISO(),
           photos: wiz.photos,
           policies_acked: policiesForEvent(wiz.event).map((p) => p.id),
         }),
       });
+      const row = Array.isArray(created) ? created[0] : created;
+      if (!row || row.id == null) throw new Error('no pending row returned');
+      savePendingReq({
+        id: row.id,
+        kind: 'clock_in',
+        event_name: wiz.event.name,
+        requested_at: row.requested_at || localISO(),
+      });
       wiz.step = 3;
       await renderWizard();
-      toast('Clocked in. Have a good shift!');
+      toast('Request sent — a manager has to let you in.', false, 5000);
       await refreshProfile();
+      startPendingPoll();
     } catch {
       const err = $('wizErr');
       if (err) {
-        err.textContent = 'Clock-in failed — check signal and try again.';
+        err.textContent = 'Couldn\'t send the request — check signal and try again.';
         err.classList.remove('hidden');
       } else {
-        toast('Clock-in failed — check signal and try again.', true);
+        toast('Couldn\'t send the request — check signal and try again.', true);
       }
       btn.disabled = false;
       if (title) title.textContent = originalLabel;
     }
+  }
+
+  /* ============================================================
+     WAITING ON A MANAGER
+     A request is a note on a whiteboard, not a punch. It lives in localStorage
+     so closing the app doesn't lose it, and the page polls the worker's own
+     history until the approved punch actually shows up.
+     ============================================================ */
+  let pendingReq = null;
+  let pendingPollTimer = null;
+
+  function pendingKey() {
+    return `tc_pending_req_${current.profile ? current.profile.id : 'none'}`;
+  }
+  function loadPendingReq() {
+    try {
+      const raw = localStorage.getItem(pendingKey());
+      pendingReq = raw ? JSON.parse(raw) : null;
+    } catch { pendingReq = null; }
+    return pendingReq;
+  }
+  function savePendingReq(req) {
+    pendingReq = req || null;
+    try {
+      if (req) localStorage.setItem(pendingKey(), JSON.stringify(req));
+      else localStorage.removeItem(pendingKey());
+    } catch { /* private mode — the in-memory copy still drives this session */ }
+  }
+
+  function stopPendingPoll() {
+    if (pendingPollTimer) { clearInterval(pendingPollTimer); pendingPollTimer = null; }
+  }
+  function startPendingPoll() {
+    stopPendingPoll();
+    if (!pendingReq) return;
+    const startedAt = Date.now();
+    pendingPollTimer = setInterval(() => {
+      if (!pendingReq) { stopPendingPoll(); return; }
+      // A phone in a pocket, or one left on this screen and forgotten, must not
+      // keep asking. Every poll is a billed n8n execution and this account has
+      // been locked out by quota before. Screen off, or 30 minutes with no
+      // answer, and it stops — the worker can pull to refresh by reopening.
+      if (document.hidden) return;
+      if (Date.now() - startedAt > 30 * 60 * 1000) { stopPendingPoll(); return; }
+      if ($('view-profile').classList.contains('hidden')) return;
+      refreshProfile({ silent: true });
+    }, 8000);
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && pendingReq && !$('view-profile').classList.contains('hidden')) {
+      refreshProfile({ silent: true });
+    }
+  });
+
+  async function cancelPendingReq() {
+    if (!pendingReq) return;
+    const yes = await confirmAsk('Take back your request?',
+      'The manager will stop seeing it. You can ask again whenever you\'re ready.');
+    if (!yes) return;
+    const req = pendingReq;
+    try {
+      await api('tc-request', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'cancel', pending_id: String(req.id) }),
+      });
+      savePendingReq(null);
+      stopPendingPoll();
+      toast('Request taken back.');
+      await refreshProfile();
+    } catch {
+      toast('Couldn\'t take it back — try again.', true);
+    }
+  }
+
+  async function requestClockOut() {
+    if (!current.open) return;
+    const yes = await confirmAsk('Ask to clock out?',
+      'A manager has to confirm it. Your shift keeps running until they do.');
+    if (!yes) return;
+    try {
+      const created = await api('tc-request', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'request',
+          kind: 'clock_out',
+          profile_id: current.profile.id,
+          profile_name: `${current.profile.first_name} ${current.profile.last_name}`,
+          punch_id: String(current.open.id),
+          event_id: current.open.event_id || '',
+          event_name: current.open.event_name || '',
+          work_date: current.open.work_date || localDate(),
+          requested_at: localISO(),
+        }),
+      });
+      const row = Array.isArray(created) ? created[0] : created;
+      if (!row || row.id == null) throw new Error('no pending row returned');
+      savePendingReq({
+        id: row.id,
+        kind: 'clock_out',
+        punch_id: String(current.open.id),
+        event_name: current.open.event_name || '',
+        requested_at: row.requested_at || localISO(),
+      });
+      toast('Asked to clock out — find a manager.', false, 5000);
+      await refreshProfile();
+      startPendingPoll();
+    } catch {
+      toast('Couldn\'t send that — try again.', true);
+    }
+  }
+
+  function renderWaitingCard(box) {
+    const isOut = pendingReq.kind === 'clock_out';
+    const card = document.createElement('div');
+    card.className = 'waiting-card';
+    card.innerHTML = `
+      <div class="waiting-pulse" aria-hidden="true"></div>
+      <div class="waiting-title">${isOut ? 'WAITING TO CLOCK OUT' : 'WAITING TO CLOCK IN'}</div>
+      <div class="waiting-sub">
+        ${isOut
+          ? 'You are still on the clock. A manager has to confirm your clock-out.'
+          : `You are <b>not on the clock yet</b> for <b>${esc(pendingReq.event_name || 'this job')}</b>.`}
+      </div>
+      <div class="waiting-hint">Go to whoever is running the door and ask them to let you
+        ${isOut ? 'out' : 'in'} on their app. This screen updates on its own.</div>`;
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'chip-btn waiting-cancel';
+    cancel.textContent = isOut ? 'NEVER MIND' : 'TAKE IT BACK';
+    cancel.onclick = cancelPendingReq;
+    card.appendChild(cancel);
+    box.appendChild(card);
   }
 
   /* ---------- shift summary after clock-out ---------- */
@@ -1469,1688 +1635,17 @@
     }
   }
 
-  function renderPolicyHtml(packs) {
-    const list = Array.isArray(packs) ? packs : (packs ? [packs] : []);
-    if (!list.length) return '<p class="muted">No policies attached to this event yet.</p>';
-    return list.map((pack) => {
-      const full = (pack.sections || []).map((s) => `<h5>${esc(s.h)}</h5>${esc(s.body)}`).join('');
-      return `<div class="policy-block">
-        <h4>${esc(pack.title)}</h4>
-        <ul>${(pack.bullets || []).map((b) => `<li>${esc(b)}</li>`).join('')}</ul>
-        ${full ? `<details><summary>FULL POLICY — READ WORD FOR WORD</summary><div class="policy-full">${full}</div></details>` : ''}
-      </div>`;
-    }).join('');
-  }
-
-  /* ============================================================
-     ADMIN
-     ============================================================ */
-  let adminPin = '';
-  let adminPinOk = null;
-  let eventTab = 'active';
-  let calCursor = new Date();
-  let rangeStart = null; // YYYY-MM-DD
-  let rangeEnd = null;
-  let selectedTemplateId = null;
-
-  function openAdmin() {
-    show('admin');
-    if (adminPinOk) { $('adminGate').classList.add('hidden'); $('adminDash').classList.remove('hidden'); loadAdmin(); loadWeekView({ force: true }); startAdminPoll(); return; }
-    adminPin = '';
-    paintPin();
-    $('adminGate').classList.remove('hidden');
-    $('adminDash').classList.add('hidden');
-  }
-
-  function paintPin() {
-    [...$('pinDots').children].forEach((dot, i) => dot.classList.toggle('on', i < adminPin.length));
-  }
-
-  $('pinPad').addEventListener('click', async (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    if (b.dataset.k === 'del') { adminPin = adminPin.slice(0, -1); paintPin(); return; }
-    if (adminPin.length >= 4) return;
-    adminPin += b.textContent.trim();
-    paintPin();
-    $('pinErr').classList.add('hidden');
-    if (adminPin.length === 4) {
-      try {
-        await api(`tc-admin?pass=${encodeURIComponent(adminPin)}&date=${localDate()}`);
-        adminPinOk = adminPin;
-        $('adminGate').classList.add('hidden');
-        $('adminDash').classList.remove('hidden');
-        $('adminDate').value = localDate();
-        toast('Syncing admin state across devices…', false, 2200);
-        await ensureMetaSynced({ allowPush: true });
-        loadAdmin();
-        loadWeekView({ force: true });
-        startAdminPoll();
-      } catch {
-        $('pinErr').classList.remove('hidden');
-        $('pinDots').classList.add('shake');
-        setTimeout(() => $('pinDots').classList.remove('shake'), 400);
-        adminPin = '';
-        setTimeout(paintPin, 350);
-      }
-    }
-  });
-
-  let lastPunchesSig = '';
-  let lastCrewSig = '';
-  async function loadAdmin(opts = {}) {
-    const silent = opts.silent === true;
-    if (!$('adminDate').value) $('adminDate').value = localDate();
-    const date = $('adminDate').value;
-    const tbody = $('adminRows');
-    if (!silent) tbody.innerHTML = `<tr><td colspan="10" class="muted center">${spinnerHtml()}Loading…</td></tr>`;
-    try {
-      const punches = rows(await api(`tc-admin?pass=${encodeURIComponent(adminPinOk)}&date=${encodeURIComponent(date)}`))
-        .sort((a, b) => String(a.clock_in).localeCompare(String(b.clock_in)));
-      const sig = punches.map((p) => [p.id, p.status, p.clock_out, p.break_end].join('~')).join('|');
-      if (!silent || sig !== lastPunchesSig) {
-        tbody.innerHTML = !punches.length
-          ? '<tr><td colspan="10" class="muted center">No punches for this day.</td></tr>'
-          : punches.map((p) => {
-            const h = shiftHours(p);
-            // Clock-in photos used to be Google Drive links, private to the
-            // Drive owner. Photos taken since the move live on the backend and
-            // are just as private — they need the admin pass. Older Drive links
-            // are left exactly as they were stored.
-            const photo = (url, label) => {
-              if (!url) return '·';
-              const href = String(url).startsWith(API)
-                ? `${url}?pass=${encodeURIComponent(adminPinOk)}`
-                : url;
-              return `<a href="${esc(href)}" target="_blank" rel="noopener">${label}</a>`;
-            };
-            return `<tr>
-              <td>${esc(p.profile_name)}</td>
-              <td>${esc(p.event_name || '')}</td>
-              <td>${fmtTime(p.clock_in)}</td>
-              <td>${fmtTime(p.break_start)}</td>
-              <td>${fmtTime(p.break_end)}</td>
-              <td>${p.break_taken ? '☑' : '☐'}</td>
-              <td>${p.status === 'out' ? fmtTime(p.clock_out) : '<b style="color:var(--in-green)">on clock</b>'}</td>
-              <td>${h != null ? h.toFixed(2) : '—'}</td>
-              <td>${photo(p.photo_selfie, 'SELFIE')}</td>
-              <td><button type="button" class="row-del" data-del="${esc(String(p.id))}"
-                    data-who="${esc(p.profile_name || 'this shift')}" title="Delete this punch">✕</button></td>
-            </tr>`;
-          }).join('');
-      }
-      lastPunchesSig = sig;
-    } catch {
-      if (!silent) tbody.innerHTML = '<tr><td colspan="10" class="form-err center">Couldn\'t load the sheet.</td></tr>';
-    }
-    loadCrew(opts);
-    loadAdminEvents(opts);
-  }
-
-  /* ============================================================
-     CREW — who the owner has cleared for their own weekly sheet
-     ============================================================ */
-  async function loadCrew(opts = {}) {
-    const box = $('adminCrew');
-    if (!box) return;
-    const silent = opts.silent === true;
-    if (!silent && !box.children.length) box.innerHTML = `<p class="muted center">${spinnerHtml()}Loading crew…</p>`;
-    let crew;
-    try {
-      crew = rows(await api('tc-profiles'));
-    } catch {
-      if (!silent) box.innerHTML = '<p class="form-err center">Couldn\'t load the crew.</p>';
-      return;
-    }
-    // Archive and event-permission live on the SERVER now (tc_crew_flags), not
-    // in the device meta blob — the Tuesday email builder has to be able to see
-    // them, and it cannot read the blob. Archiving therefore really does stop
-    // someone's email, and restoring really does turn it back on.
-    let flagRows = [];
-    try { flagRows = rows(await api('tc-crew-flags')); } catch { /* fall back to no flags */ }
-    const flagFor = (id) => flagRows.find((f) => String(f.profile_id) === String(id)) || {};
-    crew.sort((a, b) => `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`));
-    const sig = crew.map((p) => `${p.id}~${p.first_name}~${p.last_name}~${p.email}~${flagFor(p.id).can_create_events === true}~${flagFor(p.id).archived === true}`).join('|');
-    if (silent && sig === lastCrewSig) return;
-    lastCrewSig = sig;
-
-    box.innerHTML = '';
-    if (!crew.length) {
-      box.innerHTML = '<p class="muted center">No profiles yet.</p>';
-    }
-    // One place that paints a crew row's open/closed state: the menu itself,
-    // the trigger's label and arrow, and the `menu-open` class that lifts the
-    // whole block in front of its neighbours.
-    const paintCrewMenu = (btn, box2, open) => {
-      box2.classList.toggle('hidden', !open);
-      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-      btn.textContent = open ? 'ACTIONS \u25b4' : 'ACTIONS \u25be';
-      if (box2.parentElement) box2.parentElement.classList.toggle('menu-open', open);
-    };
-    crew.forEach((p) => {
-      const flag = flagFor(p.id);
-      const canMakeEvents = flag.can_create_events === true;
-      const archived = flag.archived === true;
-      const saveFlags = async (next) => {
-        await api('tc-profile-admin', {
-          method: 'POST',
-          body: JSON.stringify({
-            pass: adminPinOk,
-            action: 'flags',
-            profile_id: p.id,
-            archived: next.archived,
-            can_create_events: next.can_create_events,
-          }),
-        });
-        lastCrewSig = '';
-        loadCrew();
-      };
-      const row = document.createElement('div');
-      row.className = `crew-item${archived ? ' is-archived' : ''}`;
-      row.innerHTML = `
-        <span class="crew-who">
-          <span class="crew-name">${esc(p.first_name)} ${esc(p.last_name)}${archived ? ' <em>(archived)</em>' : ''}</span>
-          <span class="crew-mail">${esc(p.email || 'no email on file')}</span>
-        </span>`;
-
-      // One menu per person instead of a single toggle: clock in, clock out,
-      // edit their details, grant event creation, archive, delete.
-      const menuWrap = document.createElement('div');
-      menuWrap.className = 'crew-menu-wrap';
-      const trigger = document.createElement('button');
-      trigger.type = 'button';
-      trigger.className = 'crew-toggle';
-      trigger.textContent = 'ACTIONS ▾';
-      trigger.setAttribute('aria-expanded', 'false');
-      const menu = document.createElement('div');
-      menu.className = 'crew-menu hidden';
-      trigger.onclick = () => {
-        const open = menu.classList.contains('hidden');
-        // Close any other person's menu first so only one is ever open, and
-        // reset that person's trigger with it.
-        document.querySelectorAll('.crew-menu').forEach((m) => {
-          if (m === menu) return;
-          const other = m.parentElement && m.parentElement.querySelector('.crew-toggle');
-          if (other) paintCrewMenu(other, m, false);
-          else m.classList.add('hidden');
-        });
-        paintCrewMenu(trigger, menu, open);
-        // The row can sit at the bottom of a phone screen, which would open the
-        // menu off-screen. Bring the whole thing into view.
-        if (open) requestAnimationFrame(() => menu.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
-      };
-
-      const item = (label, fn, cls = '') => {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = `crew-menu-item ${cls}`;
-        b.textContent = label;
-        b.onclick = async () => { paintCrewMenu(trigger, menu, false); await fn(); };
-        return b;
-      };
-
-      const openPunch = async () => {
-        const hist = rows(await api(`tc-history?profileId=${encodeURIComponent(p.id)}`));
-        return hist.find((x) => x.status === 'in' || x.status === 'break') || null;
-      };
-
-      menu.append(
-        item('⏱ Clock in', async () => {
-          const open = await openPunch().catch(() => null);
-          if (open) { toast(`${p.first_name} is already on the clock.`, true); return; }
-          const job = window.prompt(`What job is ${p.first_name} clocking in for?`, '');
-          if (!job || !job.trim()) return;
-          try {
-            await api('tc-punch', {
-              method: 'POST',
-              body: JSON.stringify({
-                action: 'clock_in',
-                profile_id: p.id,
-                profile_name: `${p.first_name} ${p.last_name}`,
-                event_id: `job-${job.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-                event_name: job.trim(),
-                work_date: localDate(),
-                clock_in: localISO(),
-                photos: {},
-                policies_acked: [],
-              }),
-            });
-            toast(`${p.first_name} clocked in.`);
-            lastPunchesSig = '';
-            loadAdmin();
-          } catch { toast('Couldn\'t clock them in — try again.', true); }
-        }),
-        item('⏹ Clock out', async () => {
-          let open;
-          try { open = await openPunch(); } catch { toast('Couldn\'t reach the clock.', true); return; }
-          if (!open) { toast(`${p.first_name} isn't clocked in.`, true); return; }
-          try {
-            await api('tc-punch', {
-              method: 'POST',
-              body: JSON.stringify({ action: 'clock_out', punch_id: open.id, time: localISO() }),
-            });
-            toast(`${p.first_name} clocked out.`);
-            lastPunchesSig = '';
-            loadAdmin();
-          } catch { toast('Couldn\'t clock them out — try again.', true); }
-        }),
-        item('✎ Edit profile', async () => {
-          const first = window.prompt('First name', p.first_name || '');
-          if (first === null) return;
-          const last = window.prompt('Last name', p.last_name || '');
-          if (last === null) return;
-          const email = window.prompt('Email address', p.email || '');
-          if (email === null) return;
-          if (!first.trim() || !last.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
-            toast('First name, last name and a valid email are all required.', true);
-            return;
-          }
-          try {
-            await api('tc-profile-admin', {
-              method: 'POST',
-              body: JSON.stringify({
-                pass: adminPinOk, action: 'update', profile_id: p.id,
-                first_name: first.trim(), last_name: last.trim(), email: email.trim(),
-              }),
-            });
-            toast('Profile updated.');
-            lastCrewSig = '';
-            loadCrew();
-          } catch { toast('Couldn\'t save that profile — try again.', true); }
-        }),
-        item(canMakeEvents ? '★ Can create events — ON' : '☆ Can create events — OFF', async () => {
-          try {
-            await saveFlags({ archived, can_create_events: !canMakeEvents });
-            toast(!canMakeEvents
-              ? `${p.first_name} can create events.`
-              : `${p.first_name} can no longer create events.`);
-          } catch { toast('Couldn\'t save that — try again.', true); }
-        }),
-        item(archived ? '↩ Restore' : '📦 Archive', async () => {
-          try {
-            await saveFlags({ archived: !archived, can_create_events: canMakeEvents });
-            toast(!archived
-              ? `${p.first_name} archived — they stop getting the Tuesday email.`
-              : `${p.first_name} restored — their Tuesday email starts again.`);
-          } catch { toast('Couldn\'t save that — try again.', true); }
-        }),
-        item('✕ Delete person', async () => {
-          const yes = await confirmAsk(`Delete ${p.first_name} ${p.last_name}?`,
-            'Their profile is removed for good. Shifts already recorded stay on the day sheet unless you delete those too.');
-          if (!yes) return;
-          try {
-            await api('tc-profile-admin', {
-              method: 'POST',
-              body: JSON.stringify({ pass: adminPinOk, action: 'delete', profile_id: p.id }),
-            });
-            toast(`${p.first_name} deleted.`);
-            lastCrewSig = '';
-            loadCrew();
-          } catch { toast('Couldn\'t delete that profile — try again.', true); }
-        }, 'danger'),
-      );
-
-      menuWrap.append(trigger);
-      row.appendChild(menuWrap);
-
-      // Swipe left to archive, right to delete — the same gesture the event
-      // rows use, wired to the same functions the menu items call so the two
-      // can never disagree.
-      const swipe = document.createElement('div');
-      swipe.className = 'event-swipe crew-swipe';
-      swipe.innerHTML = '<div class="event-swipe-bg"><span class="arch">' + (archived ? 'RESTORE' : 'ARCHIVE') + '</span><span class="del">DELETE</span></div>';
-      swipe.appendChild(row);
-      // The menu is a SIBLING of the row, not a child of it, and it is in
-      // normal flow. Inside the row it was an absolute overlay that
-      // `.crew-swipe { overflow: hidden }` sliced off at the row's bottom edge,
-      // so most of the actions were invisible. Here it makes its own room and
-      // pushes the rest of the crew list down. It also sits outside the swipe
-      // listeners (which are bound to the row), so tapping an action can never
-      // be read as a swipe.
-      swipe.appendChild(menu);
-      attachSwipe(swipe, row, {
-        left: async () => {
-          try {
-            await saveFlags({ archived: !archived, can_create_events: canMakeEvents });
-            toast(!archived
-              ? `${p.first_name} archived — they stop getting the Tuesday email.`
-              : `${p.first_name} restored — their Tuesday email starts again.`);
-          } catch { row.style.transform = ''; toast('Couldn\'t save that — try again.', true); }
-        },
-        right: async () => {
-          const yes = await confirmAsk(`Delete ${p.first_name} ${p.last_name}?`,
-            'Their profile is removed for good. Archive instead if they are only away for a while — that stops the email but keeps them.');
-          if (!yes) { row.style.transform = ''; return; }
-          try {
-            await api('tc-profile-admin', {
-              method: 'POST',
-              body: JSON.stringify({ pass: adminPinOk, action: 'delete', profile_id: p.id }),
-            });
-            toast(`${p.first_name} deleted.`);
-            lastCrewSig = '';
-            loadCrew();
-          } catch { row.style.transform = ''; toast('Couldn\'t delete that profile — try again.', true); }
-        },
-      });
-      box.appendChild(swipe);
-    });
-    loadOwnerEmails();
-  }
-
-  // The admin addresses held on the server (Thomas + Josh). Every event report
-  // goes to these whoever created the event, so nobody has to remember to add
-  // them and no event can be created that the owners don't hear about.
-  let adminReportEmails = [];
-  const dedupeEmails = (list) => {
-    const seen = new Set();
-    return list.filter((a) => {
-      const k = String(a || '').trim().toLowerCase();
-      if (!k || seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-  };
-
-  /**
-   * Renders what the SERVER actually holds, underneath the box — so a saved
-   * address is visible proof, not just text still sitting in the field. This
-   * is the difference between "I typed it" and "it saved".
-   */
-  function paintSavedOwners(value, when) {
-    const box = $('ownerEmailsSaved');
-    if (!box) return;
-    const list = String(value || '').split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
-    if (!list.length) {
-      box.innerHTML = '<p class="field-note form-err">Nobody is set to receive the full crew sheet. Add an address above and hit SAVE.</p>';
-      return;
-    }
-    box.innerHTML = `<p class="field-note muted">Saved on the server${when ? ` — ${when}` : ''}. These get the full crew sheet every Tuesday. Tap one to put it back in the box:</p>`
-      + `<div class="saved-chips">${list.map((a) => `<button type="button" class="saved-chip" data-mail="${esc(a)}">${esc(a)}</button>`).join('')}</div>`;
-    // Tapping a saved address puts it back in the field. After an accidental
-    // wipe the server's copy is the only place the list still exists, so it has
-    // to be recoverable by thumb, not by retyping it from memory.
-    box.querySelectorAll('.saved-chip').forEach((chip) => {
-      chip.onclick = () => {
-        const input = $('ownerEmails');
-        const have = input.value.split(/[,;\s]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
-        const mail = chip.dataset.mail;
-        if (have.includes(mail.toLowerCase())) { toast(`${mail} is already in the box.`); return; }
-        input.value = input.value.trim() ? `${input.value.trim().replace(/,\s*$/, '')}, ${mail}` : mail;
-        toast(`${mail} added — hit SAVE to keep it.`);
-      };
-    });
-  }
-
-  // The last list the server confirmed, kept so an accidental empty SAVE can be
-  // caught before it wipes a real one.
-  let lastSavedOwnerEmails = '';
-
-  async function loadOwnerEmails() {
-    const input = $('ownerEmails');
-    // No one-shot guard: this used to load once per page and never refresh, so
-    // the field could show a stale value all session. Only skip while the
-    // admin is actually typing in it.
-    if (!input || document.activeElement === input) return;
-    try {
-      const found = rows(await api(`tc-settings?pass=${encodeURIComponent(adminPinOk)}`))
-        .find((s) => s.setting_key === 'owner_emails');
-      const value = (found && found.setting_value) || '';
-      input.value = value;
-      adminReportEmails = dedupeEmails(value.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean));
-      lastSavedOwnerEmails = value;
-      paintSavedOwners(value, found && found.updated_at ? fmtDate(String(found.updated_at).slice(0, 10)) : '');
-    } catch { /* leave whatever is typed */ }
-  }
-
-  $('ownerEmailsSave').onclick = async () => {
-    const btn = $('ownerEmailsSave');
-    const value = $('ownerEmails').value.trim();
-    // Validate EVERY address, not the whole string at once. The old check let
-    // "you@x.com, josh" through, because one greedy match across the commas
-    // satisfied it.
-    const list = value.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
-    const bad = list.filter((a) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a));
-    if (bad.length) {
-      toast(`Not a valid email address: ${bad.join(', ')}`, true);
-      return;
-    }
-    // An empty box used to save straight through and silently wipe the list —
-    // which is exactly how the owners' addresses got cleared. Emptying it stops
-    // the Tuesday crew sheet reaching anybody, so it now takes a deliberate yes.
-    if (!list.length) {
-      const had = lastSavedOwnerEmails.split(/[,;\s]+/).map((a) => a.trim()).filter(Boolean);
-      if (had.length) {
-        const yes = await confirmAsk('Remove every owner address?',
-          `The box is empty. Saving it removes ${had.join(', ')} and NOBODY receives the Tuesday crew sheet. Tap an address below to put it back instead.`);
-        if (!yes) return;
-      } else {
-        toast('Nothing to save — add an address first.', true);
-        return;
-      }
-    }
-    btn.disabled = true;
-    btn.textContent = 'SAVING…';
-    try {
-      await api('tc-settings', {
-        method: 'POST',
-        body: JSON.stringify({ pass: adminPinOk, key: 'owner_emails', value: list.join(', ') }),
-      });
-      // Read it back from the server rather than trusting the POST. Until the
-      // server says so, nothing is saved — this is what makes a save provable
-      // instead of "the text is still in the box".
-      const found = rows(await api(`tc-settings?pass=${encodeURIComponent(adminPinOk)}`))
-        .find((s) => s.setting_key === 'owner_emails');
-      const confirmed = (found && found.setting_value) || '';
-      $('ownerEmails').value = confirmed;
-      adminReportEmails = dedupeEmails(confirmed.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean));
-      lastSavedOwnerEmails = confirmed;
-      paintSavedOwners(confirmed, 'just now');
-      toast(confirmed === list.join(', ')
-        ? `Saved — ${list.length} admin address${list.length === 1 ? '' : 'es'} on file.`
-        : 'Saved, but the server came back different — check the list below.', confirmed !== list.join(', '));
-    } catch {
-      // Repaint what the server last confirmed, not a blank. Painting '' here
-      // told the admin nobody was on file when in fact the old list was intact.
-      paintSavedOwners(lastSavedOwnerEmails, '');
-      toast('NOT saved — the server didn\'t take it. Your saved list below is unchanged.', true);
-    }
-    btn.disabled = false;
-    btn.textContent = 'SAVE';
-  };
-
-  $('sendSheetNow').onclick = async () => {
-    const btn = $('sendSheetNow');
-    const note = $('sendSheetNote');
-    btn.disabled = true;
-    btn.textContent = 'SENDING…';
-    try {
-      const r = await api('tc-timesheet', {
-        method: 'POST',
-        body: JSON.stringify({ pass: adminPinOk }),
-      });
-      if (r.sent) {
-        // photos_attached only comes back from the worker backend; n8n links
-        // the photos instead of attaching them, so don't claim a count it
-        // didn't report.
-        const photos = typeof r.photos_attached === 'number'
-          ? `, ${r.photos_attached} photo${r.photos_attached === 1 ? '' : 's'}`
-          : '';
-        const to = Array.isArray(r.to) ? r.to.length : 0;
-        note.textContent = `Sent — ${r.shifts} shift${r.shifts === 1 ? '' : 's'}, ${r.total_hours} hours${photos}, `
-          + `to ${to} address${to === 1 ? '' : 'es'}.`;
-        toast('Time sheet emailed.');
-      } else {
-        // Never claim it went out when it did not — say exactly what stopped it.
-        // `blocked` is the deliberate one-send-per-day guard, not a failure,
-        // so it shouldn't read like something broke.
-        note.textContent = r.error === 'mail_not_configured'
-          ? 'Email is not set up on the backend yet (RESEND_API_KEY / MAIL_FROM). Nothing was sent.'
-          : `${r.blocked ? '' : 'Not sent — '}${r.error || 'unknown error'}`;
-        toast(r.blocked ? 'Already sent today — one per day.' : 'Time sheet was NOT sent.', !r.blocked);
-      }
-    } catch {
-      note.textContent = 'Couldn\'t reach the backend. Nothing was sent.';
-      toast('Time sheet was NOT sent.', true);
-    }
-    btn.disabled = false;
-    btn.textContent = 'EMAIL THIS WEEK\'S SHEET NOW';
-  };
-
-  // Bound ONCE, on the tbody — loadAdmin replaces its innerHTML every 20
-  // seconds, so binding per render would stack listeners and delete twice on
-  // one tap.
-  $('adminRows').addEventListener('click', async (e) => {
-    const btn = e.target.closest('[data-del]');
-    if (!btn || btn.disabled) return;
-    const who = btn.dataset.who || 'this shift';
-    if (!window.confirm(`Delete ${who}'s punch?\n\nThe shift is removed for good and stops counting toward the time sheet.`)) return;
-    btn.disabled = true;
-    try {
-      await api('tc-punch-delete', {
-        method: 'POST',
-        body: JSON.stringify({ pass: adminPinOk, punch_id: Number(btn.dataset.del) }),
-      });
-      lastPunchesSig = ''; // force a repaint even though the poll is silent
-      toast('Punch deleted.');
-      loadAdmin();
-    } catch {
-      btn.disabled = false;
-      toast('Couldn\'t delete that punch — try again.', true);
-    }
-  });
-
-  $('eventTabs').addEventListener('click', (e) => {
-    const tab = e.target.closest('[data-tab]');
-    if (!tab) return;
-    eventTab = tab.dataset.tab;
-    [...$('eventTabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === eventTab));
-    loadAdminEvents();
-  });
-
-  let durationKind = 'today';
-
-  let lastEventsSig = '';
-  async function loadAdminEvents(opts = {}) {
-    const silent = opts.silent === true;
-    const box = $('adminEvents');
-    if (!silent) box.innerHTML = `<p class="muted center">${spinnerHtml()}Loading…</p>`;
-    try {
-      await ensureMetaSynced({ allowPush: !!adminPinOk });
-      const events = rows(await api('tc-events'))
-        .filter((ev) => !isMetaEvent(ev) && !isDeleted(ev.id))
-        .map(applyEventEdit);
-      syncTemplatesFromEvents(events);
-      const shown = events
-        .filter((ev) => eventTab === 'archived' ? isArchived(ev.id) : !isArchived(ev.id))
-        .sort((a, b) => createdRank(b) - createdRank(a)); // newest created at top
-      const sig = `${eventTab}::${shown.map((ev) => [ev.id, ev.name, ev.start_at, ev.end_at, ev.report_sent].join('~')).join('|')}`;
-      if (!silent || sig !== lastEventsSig) {
-        box.innerHTML = shown.length ? '' : `<p class="muted center">${eventTab === 'archived' ? 'Archive is empty.' : 'No active events — create one.'}</p>`;
-        shown.forEach((ev) => box.appendChild(buildEventRow(ev)));
-      }
-      lastEventsSig = sig;
-    } catch {
-      if (!silent) box.innerHTML = '<p class="form-err center">Couldn\'t load events.</p>';
-    }
-  }
-
-  // Event ids marked for deletion but not yet committed to the server.
-  const pendingEventDeletes = new Set();
-
-  function paintPendingEvents() {
-    const note = $('eventsPending');
-    // Two buttons, one at the top of EVENTS and one under the list, because the
-    // list is long enough on a phone that the top one scrolls out of reach.
-    const btns = eventsSaveButtons();
-    if (!note || !btns.length) return;
-    const n = pendingEventDeletes.size;
-    note.classList.toggle('hidden', n === 0);
-    note.textContent = n ? `${n} event${n === 1 ? '' : 's'} marked to delete. Hit SAVE to remove ${n === 1 ? 'it' : 'them'} from the server for good.` : '';
-    btns.forEach((btn) => {
-      btn.classList.toggle('primary', n > 0);
-      btn.textContent = n ? `SAVE (${n})` : 'SAVE';
-    });
-  }
-
-  function eventsSaveButtons() {
-    return [$('eventsSave'), $('eventsSaveBottom')].filter(Boolean);
-  }
-
-  async function commitEventDeletes() {
-    const btns = eventsSaveButtons();
-    if (!pendingEventDeletes.size) { toast('Nothing to save — no events are marked.'); return; }
-    const ids = [...pendingEventDeletes];
-    btns.forEach((b) => { b.disabled = true; b.textContent = 'SAVING…'; });
-    let done = 0;
-    const stuck = [];
-    for (const id of ids) {
-      try {
-        await api('tc-event-delete', {
-          method: 'POST',
-          body: JSON.stringify({ pass: adminPinOk, event_id: Number(id) }),
-        });
-        pendingEventDeletes.delete(id);
-        done += 1;
-      } catch {
-        stuck.push(id);
-      }
-    }
-    btns.forEach((b) => { b.disabled = false; });
-    paintPendingEvents();
-    lastEventsSig = '';
-    loadAdminEvents();
-    toast(stuck.length
-      ? `Deleted ${done}. ${stuck.length} wouldn't go — still marked, try SAVE again.`
-      : `Deleted ${done} event${done === 1 ? '' : 's'} from the server.`, stuck.length > 0);
-  }
-
-  eventsSaveButtons().forEach((b) => { b.onclick = commitEventDeletes; });
-
-  /* ============================================================
-     WEEK BY WEEK — read everyone's hours in the app, no email needed.
-     Weeks are named by their date range (Thomas, 2026-08-25), and the pay
-     week runs Wednesday → Tuesday to match the sheet that gets emailed.
-     ============================================================ */
-
-  // All punches are fetched ONCE and paged through in the browser. Executions
-  // are billed, so a week view must not cost seven calls to walk seven days.
-  let weekPunches = null;
-  let weekOffset = 0; // 0 = the week we are in now, -1 = the week before it
-
-  function weekRange(offset = 0) {
-    const now = new Date();
-    const dow = now.getDay();                    // 0 Sun … 6 Sat
-    const toTuesday = (2 - dow + 7) % 7;         // forward to this week's Tuesday
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + toTuesday + offset * 7);
-    const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 6);
-    return { start: localDate(start), end: localDate(end) };
-  }
-
-  const weekTitle = (r) => {
-    const f = (ymd) => new Date(`${ymd}T12:00:00`).toLocaleDateString([], { month: 'short', day: 'numeric' });
-    return `${f(r.start)} – ${f(r.end)}, ${r.end.slice(0, 4)}`;
-  };
-
-  async function loadWeekView(opts = {}) {
-    const body = $('weekBody');
-    const range = weekRange(weekOffset);
-    $('weekLabel').textContent = weekTitle(range);
-    if (!weekPunches || opts.force) {
-      body.innerHTML = `<p class="muted center">${spinnerHtml()}Loading…</p>`;
-      try {
-        weekPunches = rows(await api(`tc-punches-all?pass=${encodeURIComponent(adminPinOk)}`));
-      } catch {
-        body.innerHTML = '<p class="form-err center">Couldn\'t load the record.</p>';
-        return;
-      }
-    }
-
-    const mine = weekPunches
-      .filter((p) => String(p.work_date || '') >= range.start && String(p.work_date || '') <= range.end)
-      .sort((a, b) => String(a.clock_in).localeCompare(String(b.clock_in)));
-
-    if (!mine.length) {
-      body.innerHTML = '<p class="muted center">Nobody clocked in this week.</p>';
-      return;
-    }
-
-    const byWho = {};
-    mine.forEach((p) => { (byWho[p.profile_name || '—'] = byWho[p.profile_name || '—'] || []).push(p); });
-
-    let grand = 0;
-    body.innerHTML = Object.keys(byWho).sort().map((who) => {
-      const shifts = byWho[who];
-      const total = shifts.reduce((sum, p) => sum + (shiftHours(p) || 0), 0);
-      grand += total;
-      return `<div class="week-person">
-        <div class="week-person-head"><span>${esc(who)}</span><span class="week-person-hours">${total.toFixed(2)} h</span></div>
-        ${shifts.map((p) => {
-          const h = shiftHours(p);
-          return `<div class="week-shift${h == null ? ' open' : ''}">
-            <span>${fmtDate(p.work_date)} · ${esc(p.event_name || '')}</span>
-            <span>${fmtTime(p.clock_in)} → ${p.clock_out ? fmtTime(p.clock_out) : 'still on the clock'} · ${h == null ? '—' : h.toFixed(2) + ' h'}</span>
-          </div>`;
-        }).join('')}
-      </div>`;
-    }).join('') + `<div class="week-total"><span>TOTAL</span><span>${grand.toFixed(2)} h</span></div>`;
-  }
-
-  $('weekPrev').onclick = () => { weekOffset -= 1; loadWeekView(); };
-  $('weekNext').onclick = () => { if (weekOffset < 0) { weekOffset += 1; loadWeekView(); } };
-  $('weekReload').onclick = () => loadWeekView({ force: true });
-
-  function buildEventRow(ev) {
-    const ended = ev.end_at && new Date(ev.end_at) <= new Date();
-    const staged = pendingEventDeletes.has(String(ev.id));
-    const badge = staged
-      ? '<span class="badge willdel">WILL DELETE</span>'
-      : isArchived(ev.id)
-      ? '<span class="badge arch">ARCHIVED</span>'
-      : ev.report_sent
-        ? '<span class="badge sent">SHEET SENT</span>'
-        : ended ? '<span class="badge done">ENDED</span>' : '<span class="badge live">LIVE</span>';
-    const wrap = document.createElement('div');
-    wrap.className = 'event-swipe';
-    wrap.innerHTML = `<div class="event-swipe-bg"><span class="arch">ARCHIVE</span><span class="del">DELETE</span></div>`;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `event-item${staged ? ' pending-del' : ''}`;
-    btn.innerHTML = `<span><span class="ev-name">${esc(ev.name)}</span><br>
-      <span class="ev-times">${new Date(ev.start_at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-      → ${new Date(ev.end_at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-      · ${esc(ev.owner_email || '')}</span></span>${badge}`;
-    btn.onclick = () => openEventDetail(ev);
-    wrap.appendChild(btn);
-
-    // The same two actions the swipe performs, as named functions, so the
-    // visible buttons below and the swipe gesture can never drift apart.
-    const doArchive = async () => {
-      if (isArchived(ev.id)) {
-        restoreEvent(ev.id);
-        toast('Restored to active.');
-      } else {
-        archiveEvent(ev.id);
-        toast('Archived.');
-      }
-      loadAdminEvents();
-    };
-    // Deleting is STAGED, not immediate: no popup, no server call. The row is
-    // marked, and SAVE at the top of the EVENTS box is what actually removes it
-    // from the server. Hitting DELETE again un-stages it.
-    const doDelete = async () => {
-      btn.style.transform = '';
-      const key = String(ev.id);
-      if (pendingEventDeletes.has(key)) pendingEventDeletes.delete(key);
-      else pendingEventDeletes.add(key);
-      $('eventModal').classList.add('hidden');
-      lastEventsSig = '';
-      paintPendingEvents();
-      loadAdminEvents();
-    };
-
-    attachSwipe(wrap, btn, { left: doArchive, right: doDelete });
-
-    // Swipe is invisible — nobody discovers it. These are the same actions as
-    // plain buttons, so every event can be edited, archived and deleted
-    // without knowing a gesture exists.
-    const actions = document.createElement('div');
-    actions.className = 'event-actions';
-    const mk = (label, cls, fn) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = `chip-btn ${cls}`;
-      b.textContent = label;
-      b.onclick = (e) => { e.stopPropagation(); fn(); };
-      return b;
-    };
-    actions.append(
-      mk('EDIT', 'primary', () => openEventDetail(ev)),
-      mk(isArchived(ev.id) ? 'RESTORE' : 'ARCHIVE', '', doArchive),
-      mk(staged ? 'UNDO DELETE' : 'DELETE', 'danger', doDelete),
-    );
-    wrap.appendChild(actions);
-    return wrap;
-  }
-
-  function attachSwipe(wrap, btn, handlers) {
-    let x0 = null;
-    let dx = 0;
-    const THRESH = 72;
-    const start = (x) => { x0 = x; dx = 0; btn.style.transition = 'none'; };
-    const move = (x) => {
-      if (x0 == null) return;
-      dx = x - x0;
-      btn.style.transform = `translateX(${Math.max(-110, Math.min(110, dx))}px)`;
-    };
-    const end = async () => {
-      if (x0 == null) return;
-      btn.style.transition = 'transform .15s ease';
-      if (dx <= -THRESH) await handlers.left();
-      else if (dx >= THRESH) await handlers.right();
-      else btn.style.transform = '';
-      x0 = null; dx = 0;
-    };
-    btn.addEventListener('touchstart', (e) => start(e.changedTouches[0].clientX), { passive: true });
-    btn.addEventListener('touchmove', (e) => move(e.changedTouches[0].clientX), { passive: true });
-    btn.addEventListener('touchend', end);
-    btn.addEventListener('mousedown', (e) => {
-      start(e.clientX);
-      const onMove = (ev) => move(ev.clientX);
-      const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); end(); };
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
-    });
-  }
-
-  let editingEvent = null; // live event row when form is in edit mode
-
-  function openEventDetail(ev) {
-    ev = applyEventEdit(ev);
-    const packs = policiesForEvent(ev);
-    const ended = ev.end_at && new Date(ev.end_at) <= new Date();
-    $('evDetailTag').textContent = isArchived(ev.id) ? 'ARCHIVED EVENT' : ended ? 'PAST EVENT' : 'LIVE EVENT';
-    $('evDetailBody').innerHTML = `
-      <h3 class="confirm-title" style="text-align:left;margin-bottom:.4rem">${esc(ev.name)}</h3>
-      <div class="ev-detail-meta">
-        <div><b>Starts</b> — ${new Date(ev.start_at).toLocaleString()}</div>
-        <div><b>Ends</b> — ${new Date(ev.end_at).toLocaleString()}</div>
-        <div><b>Report email</b> — ${esc(ev.owner_email || '—')}</div>
-        <div><b>Sheet</b> — ${ev.report_sent ? 'sent' : ended ? 'pending / ended' : 'open'}</div>
-        <div><b>Policies</b> — ${packs.length ? esc(packs.map((p) => p.title).join(' · ')) : 'none selected'}</div>
-      </div>
-      <h3 class="section-label" style="margin-top:1rem">POLICIES</h3>
-      ${renderPolicyHtml(packs)}
-      <div class="ev-detail-actions">
-        <button class="big-btn primary" id="evEditBtn" type="button"><span class="big-btn-title">EDIT</span></button>
-        ${isArchived(ev.id)
-          ? '<button class="big-btn outline" id="evRestoreBtn" type="button"><span class="big-btn-title">RESTORE TO ACTIVE</span></button>'
-          : '<button class="big-btn outline" id="evArchiveBtn" type="button"><span class="big-btn-title">ARCHIVE</span></button>'}
-        <button class="big-btn danger" id="evDeleteBtn" type="button"><span class="big-btn-title">DELETE</span></button>
-      </div>`;
-    $('eventModal').classList.remove('hidden');
-    $('evEditBtn').onclick = () => {
-      $('eventModal').classList.add('hidden');
-      openEventFormForEdit(ev);
-    };
-    const arch = $('evArchiveBtn');
-    const rest = $('evRestoreBtn');
-    if (arch) arch.onclick = () => { archiveEvent(ev.id); toast('Archived.'); $('eventModal').classList.add('hidden'); loadAdminEvents(); };
-    if (rest) rest.onclick = () => { restoreEvent(ev.id); toast('Restored.'); $('eventModal').classList.add('hidden'); loadAdminEvents(); };
-    $('evDeleteBtn').onclick = async () => {
-      const yes = await confirmAsk('Delete this event?', `"${ev.name}" will be hidden from the lists.`);
-      if (!yes) return;
-      const deleteBtn = $('evDeleteBtn');
-      deleteBtn.disabled = true;
-      toast('Deleting on every device…', false, 8000);
-      const synced = await deleteEventEverywhere(ev.id);
-      toast(synced
-        ? 'Deleted everywhere — phone and computer are synced.'
-        : 'Deleted here. Shared sync is retrying — keep this screen open.', !synced, synced ? 4200 : 7000);
-      $('eventModal').classList.add('hidden');
-      loadAdminEvents();
-    };
-  }
-  $('evDetailClose').onclick = () => $('eventModal').classList.add('hidden');
-
-  /* ---------- scroll / type time pickers (12h + AM/PM) ---------- */
-  const timePickers = {};
-
-  function parseFlexibleTime(str) {
-    const raw = String(str || '').trim().toLowerCase().replace(/\./g, '');
-    if (!raw) return null;
-    let m = raw.match(/^(\d{1,2})(?::(\d{1,2}))?\s*(a|am|p|pm)?$/i);
-    if (!m) m = raw.match(/^(\d{1,2})(\d{2})\s*(a|am|p|pm)?$/i);
-    if (!m) return null;
-    let hour = Number(m[1]);
-    let min = Number(m[2] != null ? m[2] : 0);
-    if (Number.isNaN(hour) || Number.isNaN(min) || min < 0 || min > 59) return null;
-    const ap = (m[3] || '').charAt(0);
-    if (ap === 'a' || ap === 'p') {
-      if (hour < 1 || hour > 12) return null;
-      if (hour === 12) hour = 0;
-      if (ap === 'p') hour += 12;
-    } else if (hour > 23) return null;
-    return { hour, min };
-  }
-
-  function to12(hour24, min) {
-    const ap = hour24 >= 12 ? 'PM' : 'AM';
-    let h = hour24 % 12;
-    if (h === 0) h = 12;
-    return { h, min, ap };
-  }
-
-  function format12(hour24, min) {
-    const t = to12(hour24, min);
-    return `${t.h}:${pad(t.min)} ${t.ap}`;
-  }
-
-  function buildTimePicker(rootId, defaultHHMM) {
-    const root = $(rootId);
-    const [dh, dm] = defaultHHMM.split(':').map(Number);
-    const state = { hour: dh, min: dm };
-    const hourCol = root.querySelector('[data-part="hour"]');
-    const minCol = root.querySelector('[data-part="min"]');
-    const ampmCol = root.querySelector('[data-part="ampm"]');
-    const typeInput = root.querySelector('.tp-type');
-    let syncing = false;
-
-    if (!root.querySelector('.tp-hilite')) {
-      const hi = document.createElement('div');
-      hi.className = 'tp-hilite';
-      root.querySelector('.tp-wheels').appendChild(hi);
-    }
-
-    function fillCol(col, values, selected) {
-      col.innerHTML = '';
-      // spacer rows so first/last can center
-      const spacer = () => {
-        const s = document.createElement('div');
-        s.className = 'tp-item';
-        s.style.visibility = 'hidden';
-        s.textContent = '·';
-        return s;
-      };
-      col.appendChild(spacer());
-      values.forEach((v) => {
-        const item = document.createElement('div');
-        const label = col.dataset.part === 'min' ? pad(v) : String(v);
-        const selectedLabel = col.dataset.part === 'min' ? pad(selected) : String(selected);
-        item.className = `tp-item${label === selectedLabel ? ' on' : ''}`;
-        item.dataset.val = label;
-        item.textContent = label;
-        col.appendChild(item);
-      });
-      col.appendChild(spacer());
-    }
-
-    function paintWheels() {
-      const t = to12(state.hour, state.min);
-      fillCol(hourCol, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], t.h);
-      fillCol(minCol, Array.from({ length: 60 }, (_, i) => i), t.min);
-      fillCol(ampmCol, ['AM', 'PM'], t.ap);
-      requestAnimationFrame(() => {
-        snapTo(hourCol, String(t.h), false);
-        snapTo(minCol, pad(t.min), false);
-        snapTo(ampmCol, t.ap, false);
-      });
-      syncing = true;
-      typeInput.value = format12(state.hour, state.min);
-      syncing = false;
-    }
-
-    function snapTo(col, val, smooth) {
-      const items = [...col.querySelectorAll('.tp-item[data-val]')];
-      const target = items.find((el) => el.dataset.val === String(val) || el.dataset.val === String(Number(val)));
-      if (!target) return;
-      const top = target.offsetTop - (col.clientHeight / 2 - target.clientHeight / 2);
-      col.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
-      items.forEach((el) => el.classList.toggle('on', el === target));
-    }
-
-    function readCol(col) {
-      const mid = col.scrollTop + col.clientHeight / 2;
-      let best = null;
-      let bestDist = Infinity;
-      col.querySelectorAll('.tp-item[data-val]').forEach((el) => {
-        const c = el.offsetTop + el.clientHeight / 2;
-        const d = Math.abs(c - mid);
-        if (d < bestDist) { bestDist = d; best = el; }
-      });
-      return best;
-    }
-
-    function applyFromWheels() {
-      const hEl = readCol(hourCol);
-      const mEl = readCol(minCol);
-      const aEl = readCol(ampmCol);
-      if (!hEl || !mEl || !aEl) return;
-      let h = Number(hEl.dataset.val);
-      const min = Number(mEl.dataset.val);
-      const ap = aEl.dataset.val;
-      if (h === 12) h = 0;
-      if (ap === 'PM') h += 12;
-      state.hour = h;
-      state.min = min;
-      hourCol.querySelectorAll('.tp-item[data-val]').forEach((el) => el.classList.toggle('on', el === hEl));
-      minCol.querySelectorAll('.tp-item[data-val]').forEach((el) => el.classList.toggle('on', el === mEl));
-      ampmCol.querySelectorAll('.tp-item[data-val]').forEach((el) => el.classList.toggle('on', el === aEl));
-      syncing = true;
-      typeInput.value = format12(state.hour, state.min);
-      syncing = false;
-    }
-
-    let scrollTimers = new WeakMap();
-    function onScroll(col) {
-      clearTimeout(scrollTimers.get(col));
-      scrollTimers.set(col, setTimeout(() => {
-        const el = readCol(col);
-        if (el) snapTo(col, el.dataset.val, true);
-        applyFromWheels();
-      }, 80));
-    }
-
-    hourCol.onscroll = () => onScroll(hourCol);
-    minCol.onscroll = () => onScroll(minCol);
-    ampmCol.onscroll = () => onScroll(ampmCol);
-
-    // tap an item to select
-    [hourCol, minCol, ampmCol].forEach((col) => {
-      col.addEventListener('click', (e) => {
-        const item = e.target.closest('.tp-item[data-val]');
-        if (!item) return;
-        snapTo(col, item.dataset.val, true);
-        applyFromWheels();
-      });
-    });
-
-    typeInput.addEventListener('change', () => {
-      if (syncing) return;
-      const parsed = parseFlexibleTime(typeInput.value);
-      if (!parsed) {
-        typeInput.value = format12(state.hour, state.min);
-        toast('Couldn’t read that time — try 10:00 AM', true);
-        return;
-      }
-      state.hour = parsed.hour;
-      state.min = parsed.min;
-      paintWheels();
-    });
-    typeInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); typeInput.blur(); }
-    });
-
-    paintWheels();
-    timePickers[rootId] = {
-      get: () => ({ hour: state.hour, min: state.min }),
-      set: (hour, min) => { state.hour = hour; state.min = min; paintWheels(); },
-    };
-  }
-
-  function initTimePickers() {
-    if (!timePickers.tpStart) buildTimePicker('tpStart', '10:00');
-    if (!timePickers.tpEnd) buildTimePicker('tpEnd', '22:00');
-  }
-
-  /* ---------- multi-email report recipients ---------- */
-  let selectedEmails = [];
-
-  function normalizeEmail(e) {
-    return String(e || '').trim().toLowerCase();
-  }
-  function isEmail(e) {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
-  }
-
-  function paintEmailUI() {
-    const list = $('evEmailList');
-    const chips = $('evEmailChips');
-    const selectedBox = $('evEmailSelected');
-    list.innerHTML = meta.emails.map((e) => `<option value="${esc(e)}"></option>`).join('');
-
-    selectedBox.innerHTML = '';
-    if (!selectedEmails.length) {
-      selectedBox.innerHTML = '<span class="muted" style="font-size:.72rem">No recipients yet — tap a chip or type + ADD.</span>';
-    } else {
-      selectedEmails.forEach((e) => {
-        const pill = document.createElement('span');
-        pill.className = 'email-pill';
-        pill.innerHTML = `${esc(e)} <button type="button" class="x" aria-label="Remove">✕</button>`;
-        pill.querySelector('.x').onclick = () => {
-          selectedEmails = selectedEmails.filter((x) => x !== e);
-          paintEmailUI();
-        };
-        selectedBox.appendChild(pill);
-      });
-    }
-
-    chips.innerHTML = '';
-    meta.emails.slice(0, 10).forEach((e) => {
-      const on = selectedEmails.includes(e);
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = e;
-      b.classList.toggle('on', on);
-      b.onclick = () => {
-        if (on) selectedEmails = selectedEmails.filter((x) => x !== e);
-        else selectedEmails = [...selectedEmails, e];
-        paintEmailUI();
-      };
-      chips.appendChild(b);
-    });
-  }
-
-  function addEmailFromInput() {
-    const raw = normalizeEmail($('evOwnerInput').value);
-    if (!raw) return;
-    if (!isEmail(raw)) {
-      toast('That doesn’t look like an email.', true);
-      return;
-    }
-    if (!selectedEmails.includes(raw)) selectedEmails = [...selectedEmails, raw];
-    rememberEmail(raw);
-    $('evOwnerInput').value = '';
-    paintEmailUI();
-  }
-
-  $('evOwnerAdd').onclick = addEmailFromInput;
-  $('evOwnerInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); addEmailFromInput(); }
-  });
-
-  function paintPolicyChecks(selectedKeys) {
-    const selected = new Set(normalizePolicyKeys(selectedKeys));
-    const box = $('evPolicyChecks');
-    box.innerHTML = '';
-    Object.values(POLICY_PACKS).forEach((p) => {
-      const on = selected.has(p.id);
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = `policy-check${on ? ' on' : ''}`;
-      btn.dataset.policy = p.id;
-      btn.innerHTML = `
-        <span class="tc-check ${on ? 'checked' : ''}"></span>
-        <span class="policy-check-text">
-          <span class="policy-check-title">${esc(p.title)}</span>
-          <span class="policy-check-sub">${esc(p.blurb || '')}</span>
-        </span>`;
-      btn.onclick = () => {
-        if (selected.has(p.id)) selected.delete(p.id);
-        else selected.add(p.id);
-        paintPolicyChecks([...selected]);
-      };
-      box.appendChild(btn);
-    });
-  }
-  function selectedPolicyKeys() {
-    return [...$('evPolicyChecks').querySelectorAll('.policy-check.on')].map((b) => b.dataset.policy);
-  }
-
-  function removeTemplate(id) {
-    const gone = meta.templates.find((t) => t.id === id);
-    // Record the tombstone BEFORE dropping it, or the name is lost and the next
-    // cloud merge hands the chip straight back.
-    if (gone) {
-      meta.deletedTemplates = meta.deletedTemplates || {};
-      meta.deletedTemplates[tplKey(gone.name)] = true;
-    }
-    meta.templates = meta.templates.filter((t) => t.id !== id);
-    saveMeta(meta);
-    if (selectedTemplateId === id) {
-      selectedTemplateId = null;
-      if (!editingEvent) $('evName').value = '';
-    }
-  }
-
-  function paintTemplates() {
-    const box = $('evTemplates');
-    box.innerHTML = '';
-    const sorted = dropDeletedTemplates(meta.templates, meta.deletedTemplates)
-      .slice().sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
-    sorted.forEach((t) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = t.name;
-      b.title = 'Tap to select · Double-tap / double-click to delete';
-      b.classList.toggle('on', selectedTemplateId === t.id);
-      let lastTap = 0;
-      let singleTimer = null;
-      const askDelete = async () => {
-        clearTimeout(singleTimer);
-        const yes = await confirmAsk(
-          'Delete saved event?',
-          `"${t.name}" will be removed from Choose Event. Active events and punch history stay.`
-        );
-        if (!yes) return;
-        removeTemplate(t.id);
-        paintTemplates();
-        toast('Removed from Choose Event.');
-      };
-      b.addEventListener('click', (e) => {
-        const now = Date.now();
-        // Double-tap (phones) or fast second click
-        if (now - lastTap < 380) {
-          lastTap = 0;
-          e.preventDefault();
-          askDelete();
-          return;
-        }
-        lastTap = now;
-        clearTimeout(singleTimer);
-        singleTimer = setTimeout(() => applyTemplate(t), 300);
-      });
-      b.addEventListener('dblclick', (e) => {
-        e.preventDefault();
-        askDelete();
-      });
-      box.appendChild(b);
-    });
-  }
-
-  function applyTemplate(t) {
-    selectedTemplateId = t.id;
-    $('evName').value = t.name;
-    paintPolicyChecks(t.policyKeys || []);
-    initTimePickers();
-    timePickers.tpStart.set(t.startHour ?? 10, t.startMin ?? 0);
-    timePickers.tpEnd.set(t.endHour ?? 22, t.endMin ?? 0);
-    if (t.emails && t.emails.length) {
-      selectedEmails = t.emails.slice();
-    }
-    paintEmailUI();
-    durationKind = t.duration || 'custom';
-    if (durationKind === 'custom') {
-      [...$('evDurationChips').children].forEach((c) => c.classList.toggle('on', c.dataset.dur === 'custom'));
-      // keep whatever calendar range is already picked; user can retune
-      paintCalendar();
-    } else {
-      setDuration(durationKind);
-    }
-    paintTemplates();
-  }
-
-  // Typing a new name clears the chip highlight so it becomes a fresh saved event on create
-  $('evName').addEventListener('input', () => {
-    const v = $('evName').value.trim().toLowerCase();
-    const match = meta.templates.find((t) => t.name.toLowerCase() === v);
-    if (match) {
-      selectedTemplateId = match.id;
-      paintPolicyChecks(match.policyKeys || []);
-    } else {
-      selectedTemplateId = null;
-    }
-    paintTemplates();
-  });
-
-  function ymd(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
-  function parseYmd(s) {
-    const [y, m, d] = s.split('-').map(Number);
-    return new Date(y, m - 1, d);
-  }
-  function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
-  function startOfWeek(d) {
-    const x = new Date(d); const day = x.getDay();
-    x.setDate(x.getDate() - day); x.setHours(0, 0, 0, 0); return x;
-  }
-
-  function setDuration(kind) {
-    durationKind = kind;
-    [...$('evDurationChips').children].forEach((b) => b.classList.toggle('on', b.dataset.dur === kind));
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (kind === 'today') {
-      // Always the calendar day you are on right now
-      rangeStart = ymd(today);
-      rangeEnd = ymd(today);
-      calCursor = new Date(today);
-    } else if (kind === 'tomorrow') {
-      const next = addDays(today, 1);
-      rangeStart = ymd(next);
-      rangeEnd = ymd(next);
-      calCursor = next;
-    } else if (kind === 'weekend') {
-      // Friday → Saturday of the coming weekend (this week if Fri/Sat already)
-      const dow = today.getDay(); // 0 Sun … 5 Fri 6 Sat
-      let fri;
-      if (dow === 5) fri = today;
-      else if (dow === 6) fri = addDays(today, -1);
-      else if (dow === 0) fri = addDays(today, 5); // next Friday
-      else fri = addDays(today, 5 - dow); // Mon–Thu → this Friday
-      rangeStart = ymd(fri);
-      rangeEnd = ymd(addDays(fri, 1)); // Saturday
-      calCursor = fri;
-    } else if (kind === 'week') {
-      // Sunday → Thursday
-      const sun = startOfWeek(today);
-      rangeStart = ymd(sun);
-      rangeEnd = ymd(addDays(sun, 4));
-      calCursor = sun;
-    } else {
-      /* custom — keep current picks */
-    }
-    paintCalendar();
-  }
-
-  function paintCalendar() {
-    const title = $('calTitle');
-    const grid = $('calGrid');
-    const y = calCursor.getFullYear();
-    const m = calCursor.getMonth();
-    title.textContent = new Date(y, m, 1).toLocaleDateString([], { month: 'long', year: 'numeric' });
-    const firstDow = new Date(y, m, 1).getDay();
-    const daysInMonth = new Date(y, m + 1, 0).getDate();
-    const dows = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-    grid.innerHTML = dows.map((d) => `<div class="cal-dow">${d}</div>`).join('');
-    for (let i = 0; i < firstDow; i++) grid.innerHTML += '<button type="button" class="cal-day" disabled></button>';
-    const todayStr = localDate();
-    for (let day = 1; day <= daysInMonth; day++) {
-      const s = `${y}-${pad(m + 1)}-${pad(day)}`;
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'cal-day';
-      b.textContent = String(day);
-      if (s === todayStr) b.classList.add('today');
-      if (rangeStart && rangeEnd && s >= rangeStart && s <= rangeEnd) b.classList.add('in-range');
-      if (s === rangeStart || s === rangeEnd) b.classList.add('edge');
-      b.onclick = () => {
-        if (!rangeStart || (rangeStart && rangeEnd)) {
-          rangeStart = s; rangeEnd = null;
-        } else if (s < rangeStart) {
-          rangeEnd = rangeStart; rangeStart = s;
-        } else {
-          rangeEnd = s;
-        }
-        [...$('evDurationChips').children].forEach((c) => c.classList.toggle('on', c.dataset.dur === 'custom'));
-        durationKind = 'custom';
-        paintCalendar();
-      };
-      grid.appendChild(b);
-    }
-    const label = $('calRange');
-    if (rangeStart && rangeEnd) {
-      label.textContent = rangeStart === rangeEnd
-        ? `Selected: ${fmtDate(rangeStart)}`
-        : `Selected: ${fmtDate(rangeStart)} → ${fmtDate(rangeEnd)}`;
-    } else if (rangeStart) {
-      label.textContent = `Start ${fmtDate(rangeStart)} — now tap the end day.`;
-    } else {
-      label.textContent = 'Tap a start day, then an end day.';
-    }
-  }
-
-  $('calPrev').onclick = () => { calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() - 1, 1); paintCalendar(); };
-  $('calNext').onclick = () => { calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() + 1, 1); paintCalendar(); };
-  $('evDurationChips').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-dur]');
-    if (b) setDuration(b.dataset.dur);
-  });
-
-  let eventSubmitInFlight = false;
-
-  function eventFormSubmitButton() {
-    return $('eventForm').querySelector('button[type="submit"]');
-  }
-
-  function setEventFormBusy(busy) {
-    eventSubmitInFlight = !!busy;
-    const form = $('eventForm');
-    const btn = eventFormSubmitButton();
-    if (btn) btn.disabled = !!busy;
-    form.setAttribute('aria-busy', busy ? 'true' : 'false');
-    $('eventFormSubmitLabel').textContent = busy
-      ? 'SAVING…'
-      : (form.dataset.editingId ? 'SAVE CHANGES' : 'CREATE EVENT');
-  }
-
-  function setFormMode(mode, eventId) {
-    const editing = mode === 'edit';
-    $('eventFormTitle').textContent = editing ? 'EDIT EVENT' : 'NEW EVENT';
-    const form = $('eventForm');
-    if (editing && eventId != null) form.dataset.editingId = String(eventId);
-    else delete form.dataset.editingId;
-    if (!eventSubmitInFlight) $('eventFormSubmitLabel').textContent = editing ? 'SAVE CHANGES' : 'CREATE EVENT';
-  }
-
-  function closeEventForm() {
-    const form = $('eventForm');
-    form.classList.add('hidden');
-    form.classList.remove('collapsed');
-    selectedTemplateId = null;
-    selectedEmails = [];
-    editingEvent = null;
-    setFormMode('create');
-    setEventFormBusy(false);
-    $('evErr').classList.add('hidden');
-    $('evErr').textContent = '';
-    // Don't form.reset() — custom time/policy widgets fight native reset and can leave the panel feeling stuck.
-  }
-
-  function finishFormToEventList(message) {
-    closeEventForm();
-    eventTab = 'active';
-    [...$('eventTabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === 'active'));
-    loadAdminEvents();
-    toast(message, false, 4500);
-    const list = $('adminEvents');
-    if (list) list.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
-  function openEventForm() {
-    // Always open a fresh New Event panel from the top button (never toggle-close)
-    editingEvent = null;
-    setFormMode('create');
-    const form = $('eventForm');
-    form.classList.remove('hidden');
-    setEventFormCollapsed(false);
-    meta = loadMeta();
-    selectedTemplateId = null;
-    $('evName').value = '';
-    initTimePickers();
-    timePickers.tpStart.set(10, 0);
-    timePickers.tpEnd.set(22, 0);
-    selectedEmails = dedupeEmails([...adminReportEmails, ...(meta.emails[0] ? [meta.emails[0]] : [])]);
-    paintTemplates();
-    paintPolicyChecks([]);
-    paintEmailUI();
-    rangeStart = localDate();
-    rangeEnd = localDate();
-    calCursor = new Date();
-    setDuration('today');
-    $('evErr').classList.add('hidden');
-    $('evName').focus();
-    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
-  function openEventFormForEdit(ev) {
-    ev = applyEventEdit(ev);
-    editingEvent = ev;
-    setFormMode('edit', ev.id);
-    const form = $('eventForm');
-    form.classList.remove('hidden');
-    setEventFormCollapsed(false);
-    meta = loadMeta();
-    selectedTemplateId = null;
-    $('evName').value = ev.name || '';
-
-    const start = new Date(ev.start_at);
-    const end = new Date(ev.end_at);
-    rangeStart = ymd(start);
-    rangeEnd = ymd(end);
-    // if overnight edit stored end on next day, keep that
-    calCursor = start;
-    durationKind = 'custom';
-    [...$('evDurationChips').children].forEach((c) => c.classList.toggle('on', c.dataset.dur === 'custom'));
-    paintCalendar();
-
-    initTimePickers();
-    timePickers.tpStart.set(start.getHours(), start.getMinutes());
-    timePickers.tpEnd.set(end.getHours(), end.getMinutes());
-
-    const packs = policiesForEvent(ev);
-    paintPolicyChecks(packs.map((p) => p.id));
-
-    selectedEmails = String(ev.owner_email || '')
-      .split(/[,;]+/)
-      .map(normalizeEmail)
-      .filter(isEmail);
-    if (!selectedEmails.length && meta.emails[0]) selectedEmails = [meta.emails[0]];
-    paintEmailUI();
-    paintTemplates();
-
-    // highlight matching Choose Event chip if any
-    const match = meta.templates.find((t) => t.name.toLowerCase() === String(ev.name || '').toLowerCase());
-    if (match) selectedTemplateId = match.id;
-    paintTemplates();
-
-    $('evErr').classList.add('hidden');
-    $('evName').focus();
-    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
-  $('adminRefresh').onclick = loadAdmin;
-  $('adminDate').onchange = loadAdmin;
-  $('adminNewEvent').onclick = openEventForm;
-  /**
-   * Collapsing hides the FIELDS and keeps the NEW EVENT header with a ⌄, so the
-   * panel can be reopened. It used to hide the whole form, which made the panel
-   * vanish with nothing left to tap.
-   */
-  function setEventFormCollapsed(on) {
-    const form = $('eventForm');
-    const btn = $('eventFormCollapse');
-    form.classList.toggle('collapsed', on);
-    btn.textContent = on ? '⌄' : '⌃';
-    btn.setAttribute('aria-expanded', on ? 'false' : 'true');
-    btn.setAttribute('aria-label', on ? 'Open new event form' : 'Collapse new event form');
-    btn.title = on ? 'Open' : 'Collapse';
-  }
-
-  $('eventFormCollapse').onclick = () => {
-    if (eventSubmitInFlight) return;
-    setEventFormCollapsed(!$('eventForm').classList.contains('collapsed'));
-  };
-  // The whole header is a target too — a 20px chevron is a poor thumb target.
-  $('eventFormCollapse').closest('.form-card-head').onclick = (e) => {
-    if (e.target.closest('#eventFormCollapse') || eventSubmitInFlight) return;
-    if ($('eventForm').classList.contains('collapsed')) setEventFormCollapsed(false);
-  };
-
-  function normalizedEventName(value) {
-    return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
-  }
-
-  function normalizedEventEmails(value) {
-    return String(value || '')
-      .split(/[,;]+/)
-      .map(normalizeEmail)
-      .filter(isEmail)
-      .sort()
-      .join(',');
-  }
-
-  function isSameEventDraft(ev, draft) {
-    if (!ev || isMetaEvent(ev) || isDeleted(ev.id)) return false;
-    const live = applyEventEdit(ev);
-    return normalizedEventName(live.name) === normalizedEventName(draft.name)
-      && Date.parse(live.start_at || '') === Date.parse(draft.start_at || '')
-      && Date.parse(live.end_at || '') === Date.parse(draft.end_at || '')
-      && normalizedEventEmails(live.owner_email) === normalizedEventEmails(draft.owner_email);
-  }
-
-  async function findMatchingEvent(draft) {
-    const live = rows(await api('tc-events'));
-    return live.find((ev) => isSameEventDraft(ev, draft)) || null;
-  }
-
-  $('eventForm').onsubmit = async (e) => {
-    e.preventDefault();
-    if (eventSubmitInFlight) return;
-    $('evErr').classList.add('hidden');
-    const name = $('evName').value.trim();
-    if (!name) {
-      $('evErr').textContent = 'Pick a template or type an event name.';
-      $('evErr').classList.remove('hidden');
-      return;
-    }
-    if (name === META_EVENT_NAME || name.startsWith('__JUSTUS_TC_META')) {
-      $('evErr').textContent = 'That name is reserved for device sync — pick another.';
-      $('evErr').classList.remove('hidden');
-      return;
-    }
-    if (!rangeStart || !rangeEnd) {
-      $('evErr').textContent = 'Select start and end days on the calendar.';
-      $('evErr').classList.remove('hidden');
-      return;
-    }
-    const startT = timePickers.tpStart.get();
-    const endT = timePickers.tpEnd.get();
-    const start = parseYmd(rangeStart); start.setHours(startT.hour, startT.min, 0, 0);
-    const end = parseYmd(rangeEnd); end.setHours(endT.hour, endT.min, 0, 0);
-    // Same-day / multi-day: if end clock is not after start, treat as overnight into the next calendar day
-    // (no "overlap" block — many JustUs shifts run past midnight)
-    if (!(end > start)) {
-      end.setDate(end.getDate() + 1);
-    }
-    if (!(end > start)) {
-      $('evErr').textContent = 'Check start/end times — something still looks off.';
-      $('evErr').classList.remove('hidden');
-      return;
-    }
-    if (!selectedEmails.length) {
-      $('evErr').textContent = 'Add at least one report email.';
-      $('evErr').classList.remove('hidden');
-      return;
-    }
-    // Force the admin addresses back in. Whoever creates the event, the owners
-    // always get its report — they cannot be un-ticked away.
-    const owner = dedupeEmails([...adminReportEmails, ...selectedEmails]).join(', ');
-    const policyKeys = selectedPolicyKeys();
-    const startSnap = timePickers.tpStart.get();
-    const endSnap = timePickers.tpEnd.get();
-    const startISO = localISO(start);
-    const endISO = localISO(end);
-    const draft = {
-      name,
-      start_at: startISO,
-      end_at: endISO,
-      owner_email: owner,
-    };
-
-    // Lock on the first valid tap and collapse immediately. The old form stayed
-    // visible until n8n answered, which invited the 13-tap duplicate incident.
-    setEventFormBusy(true);
-    $('eventForm').classList.add('hidden');
-    toast('Saving event…', false, 8000);
-
-    // Always refresh the Choose Event chip with the latest settings
-    rememberTemplate(name, {
-      policyKeys,
-      startHour: startSnap.hour,
-      startMin: startSnap.min,
-      endHour: endSnap.hour,
-      endMin: endSnap.min,
-      emails: selectedEmails.slice(),
-      duration: durationKind,
-    });
-    selectedEmails.forEach(rememberEmail);
-
-    // ——— EDIT existing event (never POST create — n8n create webhook would spawn a duplicate) ———
-    const editId = (editingEvent && editingEvent.id != null)
-      ? editingEvent.id
-      : ($('eventForm').dataset.editingId || null);
-    if (editId != null && String(editId) !== '') {
-      const id = editId;
-      setEventPolicies(id, policyKeys);
-      saveEventEdit(id, {
-        name,
-        start_at: startISO,
-        end_at: endISO,
-        owner_email: owner,
-        policyKeys,
-      });
-      // Keep Choose Event chip in sync with this same event — do not create a live duplicate
-      rememberTemplate(name, {
-        policyKeys,
-        startHour: startSnap.hour,
-        startMin: startSnap.min,
-        endHour: endSnap.hour,
-        endMin: endSnap.min,
-        emails: selectedEmails.slice(),
-        duration: durationKind,
-      });
-      const policyLabel = policyKeys.length
-        ? policyKeys.map((k) => (POLICY_PACKS[k] && POLICY_PACKS[k].title) || k).join(' · ')
-        : 'no policies';
-      let synced = true;
-      try { synced = await flushCloudMeta(); } catch { synced = false; }
-      finishFormToEventList(synced
-        ? `Saved everywhere. Updated “${name}” — ${policyLabel}. No new event added.`
-        : `Saved here. Updated “${name}”; shared sync will retry. No new event added.`);
-      return;
-    }
-
-    // ——— CREATE new event (only from + CREATE EVENT, never from Edit) ———
-    try {
-      // Exact-match lookup makes retries idempotent if a prior request reached
-      // n8n but its response was lost, or if the same saved event is reopened.
-      let row = null;
-      try { row = await findMatchingEvent(draft); } catch { /* create can still work */ }
-      const alreadySaved = !!row;
-      if (!row) {
-        const created = await api('tc-events', {
-          method: 'POST',
-          body: JSON.stringify({
-            pass: adminPinOk,
-            ...draft,
-            policy_keys: policyKeys,
-          }),
-        });
-        row = Array.isArray(created) ? created[0] : created;
-      }
-      if (row && row.id != null) {
-        setEventPolicies(row.id, policyKeys);
-        markCreated(row.id);
-      }
-      rememberTemplate(name, {
-        policyKeys,
-        startHour: startSnap.hour,
-        startMin: startSnap.min,
-        endHour: endSnap.hour,
-        endMin: endSnap.min,
-        emails: selectedEmails.slice(),
-        duration: durationKind,
-      });
-      try { await flushCloudMeta(); } catch { /* event itself is already live; queued retry keeps metadata moving */ }
-      finishFormToEventList(alreadySaved
-        ? `Already saved — “${name}” still has one event only.`
-        : `Event live — ${name} saved once and synced.`);
-    } catch {
-      // A timeout can happen after n8n committed the row. Recover that row
-      // before showing Retry so a second tap cannot manufacture a duplicate.
-      let recovered = null;
-      try { recovered = await findMatchingEvent(draft); } catch { /* show retry below */ }
-      if (recovered) {
-        if (recovered.id != null) {
-          setEventPolicies(recovered.id, policyKeys);
-          markCreated(recovered.id);
-        }
-        try { await flushCloudMeta(); } catch { /* queued retry */ }
-        finishFormToEventList(`Saved — “${name}” was confirmed live once. No duplicate added.`);
-      } else {
-        setEventFormBusy(false);
-        $('eventForm').classList.remove('hidden');
-        $('evErr').textContent = 'Couldn’t confirm the live save. Nothing else was submitted — check the connection and retry once.';
-        $('evErr').classList.remove('hidden');
-        paintTemplates();
-        $('eventForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
-        toast('Event was not confirmed. The form is open to retry.', true, 6000);
-      }
-    }
-  };
+  /* ---------- admin lives in a SEPARATE APP now (split 2026-09-10) ----------
+     The dashboard, the PIN pad, the day sheet, crew, events and the week view
+     all moved to ../timeclock-admin/ (its own repo and URL). Workers never see
+     them here. This constant stays because the shared cloud-meta sync uses the
+     admin pass to decide whether it may PUSH: with no pass this app can only
+     ever PULL, which is exactly right for a worker's phone. ---------- */
+  const adminPinOk = null;
 
   /* ---------- boot: the URL decides which page opens ----------
-     Last, not at the top: routing can call openAdmin/loadProfiles, so every
-     view function has to exist before the first route runs. */
+     Last, not at the top: routing can call loadProfiles, so every view
+     function has to exist before the first route runs. */
   routeFromHash();
 
   /* ---------- QA hooks (harmless in production) ---------- */
@@ -3159,6 +1654,11 @@
     // The real functions, not test-only wrappers — a hook that reimplements the
     // path it is meant to check proves nothing.
     startWizard, renderCreateEventAccess,
+    // The real wizard object and the real renderer, so a test can step past the
+    // camera (which no headless DOM can drive) without faking the punch path.
+    renderWizard, get wiz() { return wiz; },
+    requestClockOut, cancelPendingReq, loadPendingReq, savePendingReq, refreshProfile,
+    get pendingReq() { return pendingReq; },
     get current() { return current; },
     get meta() { return meta; },
     ensureMetaSynced, pushCloudMeta, pullAndMergeCloudMeta,
