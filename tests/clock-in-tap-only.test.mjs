@@ -79,6 +79,24 @@ const baseMeta = (templates, deletedTemplates = {}) => ({
   check('its USE button is gone too', !/wizJobGo/.test(js) && !/wizJobGo/.test(html));
 }
 
+/* ---------- VIP policy pack is in the shipped source ---------- */
+{
+  const js = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  check('VIP Policy pack is in the employee app', /id: 'vip'/.test(js) && /title: 'VIP Policy'/.test(js));
+  check('VIP opening list is in the pack', /OPENING PROCEDURES/.test(js) && /Fill main ice bins/.test(js));
+  check('VIP closing list is in the pack', /CLOSING PROCEDURES/.test(js) && /Never skip cash reconciliation/.test(js));
+}
+
+{
+  const a = boot({ events: [], meta: baseMeta([tpl('tpl-pbr', 'PBR / Rodeo — Big Sky')]) });
+  const vip = a.shim.__tc.policiesForEvent({ id: 'vip-1', name: 'VIP drinks tonight' });
+  check('a VIP-named job attaches VIP Policy', vip.length === 1 && vip[0] && vip[0].id === 'vip', (vip || []).map((p) => p && p.id).join(','));
+  const pbr = a.shim.__tc.policiesForEvent({ id: 'pbr-1', name: 'PBR / Rodeo — Big Sky' });
+  check('PBR is still general + pbr, not VIP', (pbr || []).map((p) => p.id).join(',') === 'general,pbr');
+  const html = a.shim.__tc.renderPolicyAckHtml(vip);
+  check('VIP ack HTML shows opening and closing lists', /OPENING PROCEDURES/.test(html) && /CLOSING PROCEDURES/.test(html) && /policy-group/.test(html));
+}
+
 /* ---------- 2. only a job that is running RIGHT NOW is offered ---------- */
 {
   const evs = [
