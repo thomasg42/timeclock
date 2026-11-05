@@ -12,8 +12,8 @@
 <!-- BUMP ?v= ON EVERY DEPLOY. This token sat at 20260809 for weeks, so phones
      kept serving a stale app.js and never saw a single deploy after Aug 9 —
      fixes looked live on the server and were invisible on the actual phone. -->
-<link rel="stylesheet" href="styles.css?v=20260918-vip-policy">
-<link rel="stylesheet" href="clock-flow.css?v=20260918-vip-policy">
+<link rel="stylesheet" href="styles.css?v=20261105-self-clock">
+<link rel="stylesheet" href="clock-flow.css?v=20261105-self-clock">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>">
 </head>
 <body>
@@ -122,6 +122,17 @@
   </div>
 </div>
 
+<!-- ============ CLOCK-OUT REMINDER ============ -->
+<div class="modal hidden" id="reminderModal">
+  <div class="modal-card small">
+    <h3 id="reminderTitle" class="confirm-title">You're clocked in</h3>
+    <p class="confirm-text">Make sure you clock out when you're done.</p>
+    <div class="confirm-actions">
+      <button class="big-btn primary" id="reminderOk" type="button"><span class="big-btn-title">OKAY</span></button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ SHIFT SUMMARY ============ -->
 <div class="modal hidden" id="summaryModal">
   <div class="modal-card">
@@ -136,6 +147,6 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="config.js"></script>
-<script src="app.js?v=20260918-vip-policy"></script>
+<script src="app.js?v=20261105-self-clock"></script>
 </body>
 </html>

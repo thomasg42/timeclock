@@ -294,3 +294,7 @@ body:has(#view-admin:not(.hidden)) .view-title {
     padding: .8rem;
   }
 }
+
+/* "What event?" step: chips above the box, OK below it (2026-11-05). */
+#wizard .wiz-job + .wiz-actions { margin-top: .9rem; }
+#wizard .wiz-job-chips { margin-bottom: .25rem; }

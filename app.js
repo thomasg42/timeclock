@@ -2,16 +2,22 @@
    JustUs Entertainment TimeClock — EMPLOYEE app logic
    Backend: n8n cloud webhooks (see config.js)
 
-   This is the EMPLOYEE half of the split (2026-09-10). Tapping CLOCK IN no
-   longer stamps anything: it files a REQUEST and puts the worker on a waiting
-   screen. An admin, standing in front of them on the admin app, approves it —
-   and that tap is the stamp. There is no admin section in this app at all.
-   Admin app: ../timeclock-admin/ (separate repo, separate URL).
+   This is the EMPLOYEE half of the split (2026-09-10). There is no admin section
+   in this app at all. Admin app: ../timeclock-admin/ (separate repo, separate URL).
+
+   How clocking in works now (Thomas, 2026-11-05): CLOCK IN -> "What event?" ->
+   type or tap it -> OK -> on the clock -> pop-up "Make sure you clock out when
+   you're done." No manager approval and no selfie, because dancers clock in with
+   nobody at a door. The clock-out pings tc-event-check, which emails the event's
+   spreadsheet once the last person is out (see event-sheet/ in this folder).
+   The old request-and-wait path and the selfie still work: set them back on in
+   config.js with  window.TC_FLOW = { managerApproval: true, selfie: true };
    ============================================================ */
 (() => {
   'use strict';
 
   const API = window.TC_API;
+  const FLOW = { managerApproval: false, selfie: false, ...(window.TC_FLOW || {}) };
   const $ = (id) => document.getElementById(id);
 
   /* ---------- tiny helpers ---------- */
@@ -57,6 +63,15 @@
     const body = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
     return body ? `job-${body}` : `job-${Date.now()}`;
   };
+
+  // "for line dancing" and "Line Dancing" have to land on the same event, or the
+  // "everybody is out" check and the spreadsheet split in two.
+  const cleanJobName = (raw) => {
+    let name = String(raw || '').trim().replace(/\s+/g, ' ');
+    while (/^(for|the)\s+\S/i.test(name)) name = name.replace(/^(for|the)\s+/i, '');
+    return name.replace(/(^|\s)([a-z])/g, (m, gap, letter) => gap + letter.toUpperCase());
+  };
+  const sameJob = (a, b) => cleanJobName(a).toLowerCase() === cleanJobName(b).toLowerCase();
 
   let toastTimer;
   function toast(msg, isErr = false, ms = 3200) {
@@ -256,6 +271,9 @@
     // Load before refreshing: a request filed earlier (or before the app was
     // closed) has to be known about before the screen decides what to draw.
     loadPendingReq();
+    // A phone that filed a request under the old flow must not sit on a waiting
+    // screen that no longer leads anywhere.
+    if (!FLOW.managerApproval && pendingReq) savePendingReq(null);
     await refreshProfile();
     startPendingPoll();
   }
@@ -424,7 +442,9 @@
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'big-btn green';
-      btn.innerHTML = '<span class="big-btn-title">⏱ CLOCK IN</span><span class="big-btn-sub">Asks a manager to let you in</span>';
+      btn.innerHTML = `<span class="big-btn-title">⏱ CLOCK IN</span><span class="big-btn-sub">${FLOW.managerApproval
+        ? 'Asks a manager to let you in'
+        : 'Tell us the event and you\'re on the clock'}</span>`;
       btn.onclick = startWizard;
       box.appendChild(btn);
       return;
@@ -467,12 +487,14 @@
     const out = document.createElement('button');
     out.type = 'button';
     out.className = 'big-btn danger';
-    out.innerHTML = '<span class="big-btn-title">ASK TO CLOCK OUT</span><span class="big-btn-sub">A manager confirms it</span>';
+    out.innerHTML = FLOW.managerApproval
+      ? '<span class="big-btn-title">ASK TO CLOCK OUT</span><span class="big-btn-sub">A manager confirms it</span>'
+      : '<span class="big-btn-title">⏱ CLOCK OUT</span><span class="big-btn-sub">Ends your shift</span>';
     out.disabled = onBreak;
     out.title = onBreak ? 'End your break first' : '';
     // Clocking out is a request too — the summary now appears when the manager
     // approves it, driven by the same poll that watches for the clock-in.
-    out.onclick = requestClockOut;
+    out.onclick = FLOW.managerApproval ? requestClockOut : clockOutNow;
     box.appendChild(out);
   }
 
@@ -493,6 +515,35 @@
       return null;
     }
   }
+
+  /* The last person out of an event is what sends its spreadsheet. The server
+     re-reads every punch and decides for itself, so this ping carries nothing and
+     can do no harm. If it never lands, the hourly sweep sends the sheet anyway. */
+  function pingEventSheet() {
+    try {
+      // No JSON header on purpose: a plain POST skips the CORS preflight, so it
+      // still lands if the phone locks right after the worker taps clock out.
+      fetch(`${API}/tc-event-check`, { method: 'POST', body: '{}', keepalive: true }).catch(() => {});
+    } catch { /* the sweep covers it */ }
+  }
+
+  async function clockOutNow() {
+    if (!current.open) return;
+    const punchId = current.open.id;
+    const eventName = current.open.event_name || 'this event';
+    const updated = await punchUpdate('clock_out', 'Clock out?', `This ends your shift for ${eventName}.`);
+    if (updated === null) return;
+    pingEventSheet();
+    const done = current.punches.find((x) => String(x.id) === String(punchId));
+    if (done && done.clock_out) showSummary(done);
+    else toast('You\'re clocked out.');
+  }
+
+  function showClockOutReminder(eventName) {
+    $('reminderTitle').textContent = `You're clocked in for ${eventName}`;
+    $('reminderModal').classList.remove('hidden');
+  }
+  $('reminderOk').onclick = () => $('reminderModal').classList.add('hidden');
 
   function renderHistory() {
     const box = $('pfHistory');
@@ -554,19 +605,21 @@
     const body = $('wizBody');
     stopStream();
 
-    /* step 0 — what's this job for? (scheduled event, recent job, or typed) */
+    /* step 0 — what event? Type it, or tap one that is already going.
+       Thomas reversed the 2026-08-26 tap-only rule on 2026-11-05: dancers clock
+       into gigs nobody created ahead of time, so typing has to work. That rule
+       existed because one typo splits a crew across two names, so what others
+       already clocked into today sits right above the box, and cleanJobName folds
+       "for line dancing" into "Line Dancing". */
     if (wiz.step === 0) {
-      $('wizStep').textContent = 'STEP 1 — JOB';
-      body.innerHTML = '<div class="wiz-title">WHAT\'S THIS JOB FOR?</div><div class="wiz-sub">Checking today\'s events…</div>';
+      $('wizStep').textContent = 'CLOCK IN';
+      body.innerHTML = '<div class="wiz-title">WHAT EVENT?</div><div class="wiz-sub">Checking what\'s going today…</div>';
       let events = [];
+      let running = [];
       try {
         meta = loadMeta();
         await (metaSyncReady || Promise.resolve());
         await ensureMetaSynced({ allowPush: false });
-        // LIVE RIGHT NOW only. The old filter kept anything not yet finished,
-        // which offered events that had not started — so a worker could clock
-        // into next Saturday's gig today. An event is offered only while the
-        // clock is actually inside its window.
         const now = Date.now();
         events = rows(await api('tc-events')).map(applyEventEdit).filter((ev) => {
           if (isMetaEvent(ev) || isDeleted(ev.id) || isArchived(ev.id)) return false;
@@ -575,43 +628,78 @@
           if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt)) return false;
           return startsAt <= now && now <= endsAt;
         });
-      } catch { /* couldn't reach the schedule — the empty state below says so */ }
+      } catch { /* schedule unreachable: typing the event still works */ }
+      try {
+        const today = await api('tc-today-jobs');
+        running = (today && Array.isArray(today.jobs) ? today.jobs : []).filter((j) => j && j.event_name);
+      } catch { /* same */ }
+      if (!wiz) return; // closed while loading
 
-      /* Clocking in is TAP-ONLY, and only ACTIVE events are offered (Thomas,
-         2026-08-26). No text box and no saved-event chips: both could put a
-         worker on a job that is not running, and a typed one created an ad-hoc
-         event carrying no policy packs — one typo split a crew's hours across
-         two names on the time sheet. If nothing is live, nothing is offered.
-         Creating an event belongs in Create Event, to whoever is permitted. */
-      const sub = events.length
-        ? 'Tap the event you\'re working.'
-        : 'Nothing is running right now.';
+      // Anything that already has an id keeps it, so tapping or retyping a live
+      // event joins it and its policy packs still apply.
+      const known = [
+        ...events.map((ev) => ({ ...ev })),
+        ...running.map((j) => ({ id: j.event_id, name: j.event_name })),
+      ];
+      const chipNames = [];
+      const addChip = (name) => {
+        if (name && String(name).trim().length >= 2 && !chipNames.some((n) => sameJob(n, name))) chipNames.push(String(name).trim());
+      };
+      known.forEach((ev) => addChip(ev.name));
+      (current.punches || []).forEach((p) => addChip(p.event_name));
+
       body.innerHTML = `
-        <div class="wiz-title">WHAT'S THIS JOB FOR?</div>
-        <div class="wiz-sub">${sub}</div>
-        ${events.length
-          ? '<div class="wiz-events" id="wizEvents"></div>'
-          : `<p class="form-err center">No job is active right now, so there is nothing to clock into.
-             A job only appears here while it is running. If you should be working, ask whoever runs
-             the schedule to create the event under CREATE EVENT.</p>`}`;
+        <div class="wiz-title">WHAT EVENT?</div>
+        <div class="wiz-sub">${chipNames.length ? 'Tap one, or type it in.' : 'Type what you\'re here for.'}</div>
+        <div class="field-block wiz-job">
+          ${chipNames.length ? '<div class="template-chips wiz-job-chips" id="wizJobChips"></div>' : ''}
+          <div class="wiz-job-row">
+            <input id="wizJobName" type="text" maxlength="60" autocomplete="off" autocapitalize="words"
+                   enterkeyhint="go" placeholder="e.g. Line Dancing" aria-label="What event?">
+          </div>
+          <p class="form-err hidden" id="wizErr"></p>
+        </div>
+        <div class="wiz-actions">
+          <button class="big-btn green" id="wizPunch" type="button"><span class="big-btn-title">OK</span></button>
+        </div>`;
 
-      const choose = (ev) => { wiz.event = ev; wiz.step = 1; renderWizard(); };
+      const input = $('wizJobName');
+      const err = $('wizErr');
+      const useTyped = () => {
+        const clean = cleanJobName(input.value);
+        if (clean.length < 2) {
+          err.textContent = 'Type the event first.';
+          err.classList.remove('hidden');
+          input.focus();
+          return;
+        }
+        err.classList.add('hidden');
+        const match = known.find((ev) => sameJob(ev.name, clean));
+        wiz.event = match || { id: jobSlug(clean), name: clean, adhoc: true };
+        if (FLOW.selfie) { wiz.step = 1; renderWizard(); return; }
+        if (policiesForEvent(wiz.event).length) { wiz.step = 2; renderWizard(); return; }
+        submitClockIn();
+      };
+      $('wizPunch').onclick = useTyped;
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); useTyped(); }
+      });
+      input.addEventListener('input', () => err.classList.add('hidden'));
 
-      const list = $('wizEvents');
-      if (list) {
-        events.forEach((ev) => {
-          const packs = policiesForEvent(ev);
-          const packLabel = packs.length ? packs.map((p) => p.title).join(' + ') : 'No policies set';
-          const b = document.createElement('button');
-          b.type = 'button';
-          b.className = 'profile-item';
-          b.innerHTML = `<span><span class="profile-item-name">${esc(ev.name)}</span><br>
-            <span class="profile-item-sub">${fmtTime(ev.start_at)} → ${fmtTime(ev.end_at)} · ${esc(packLabel)}</span></span>`;
-          b.onclick = () => choose(ev);
-          list.appendChild(b);
+      const chips = $('wizJobChips');
+      if (chips) {
+        chipNames.slice(0, 8).forEach((name) => {
+          const c = document.createElement('button');
+          c.type = 'button';
+          c.textContent = name;
+          c.onclick = () => {
+            input.value = name;
+            err.classList.add('hidden');
+            chips.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === c));
+          };
+          chips.appendChild(c);
         });
       }
-
       return;
     }
 
@@ -744,7 +832,7 @@
     if (wiz.step === 2) {
       meta = loadMeta();
       const packs = policiesForEvent(wiz.event);
-      $('wizStep').textContent = packs.length ? 'STEP 3/4 — POLICIES' : 'STEP 3/3 — CLOCK IN';
+      $('wizStep').textContent = !FLOW.selfie ? 'CLOCK IN — POLICIES' : (packs.length ? 'STEP 3/4 — POLICIES' : 'STEP 3/3 — CLOCK IN');
       if (!packs.length) {
         body.innerHTML = `
           <div class="wiz-title">READY TO CLOCK IN</div>
@@ -769,7 +857,7 @@
         </label>
         <div class="wiz-actions">
           <button class="big-btn green" id="wizPunch" type="button" disabled>
-            <span class="big-btn-title">OK — ASK TO CLOCK IN</span>
+            <span class="big-btn-title">${FLOW.managerApproval ? 'OK — ASK TO CLOCK IN' : 'OK — CLOCK IN'}</span>
           </button>
         </div>
         <p class="form-err hidden" id="wizErr" style="margin-top:.7rem"></p>`;
@@ -881,6 +969,51 @@
     const title = btn.querySelector('.big-btn-title');
     const originalLabel = title ? title.textContent : '';
     if (title) title.textContent = 'SENDING…';
+    if (!FLOW.managerApproval) {
+      const eventName = wiz.event.name;
+      const clockedIn = async () => {
+        stopStream();
+        $('wizard').classList.add('hidden');
+        wiz = null;
+        showClockOutReminder(eventName);
+        await refreshProfile();
+      };
+      try {
+        await api('tc-punch', {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'clock_in',
+            profile_id: current.profile.id,
+            profile_name: `${current.profile.first_name} ${current.profile.last_name}`,
+            event_id: wiz.event.id,
+            event_name: wiz.event.name,
+            work_date: localDate(),
+            clock_in: localISO(),
+            photos: wiz.photos,
+            policies_acked: policiesForEvent(wiz.event).map((p) => p.id),
+          }),
+        });
+        await clockedIn();
+      } catch {
+        // The punch can land even when the answer never gets back. Check before
+        // inviting a retry, or a bad signal puts the same person on the clock twice.
+        await refreshProfile({ silent: true });
+        if (current.open) {
+          await clockedIn();
+          return;
+        }
+        const failed = $('wizErr');
+        if (failed) {
+          failed.textContent = 'Couldn\'t clock you in. Check signal and try again.';
+          failed.classList.remove('hidden');
+        } else {
+          toast('Couldn\'t clock you in. Check signal and try again.', true);
+        }
+        btn.disabled = false;
+        if (title) title.textContent = originalLabel;
+      }
+      return;
+    }
     try {
       // This posts to tc-request, NOT tc-punch. No punch row exists until an
       // admin approves it, so nothing here can put hours on a time sheet.
@@ -1832,7 +1965,7 @@
     // The real wizard object and the real renderer, so a test can step past the
     // camera (which no headless DOM can drive) without faking the punch path.
     renderWizard, get wiz() { return wiz; },
-    requestClockOut, cancelPendingReq, loadPendingReq, savePendingReq, refreshProfile,
+    requestClockOut, clockOutNow, cleanJobName, cancelPendingReq, loadPendingReq, savePendingReq, refreshProfile,
     get pendingReq() { return pendingReq; },
     get current() { return current; },
     get meta() { return meta; },
